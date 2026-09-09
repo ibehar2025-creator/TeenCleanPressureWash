@@ -17,7 +17,6 @@ const syncUrl = process.env.SHEETS_SYNC_URL || process.env.VITE_SHEETS_SYNC_URL;
 const automaticSheetSyncIntervalMs = 30 * 60 * 1000;
 let lastAutomaticSheetSyncAt = 0;
 const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
-const employeeAccessCode = process.env.AUTH_EMPLOYEE_CODE || "";
 const ownerAccessCode = process.env.AUTH_OWNER_CODE || process.env.AUTH_SIGNUP_CODE || "";
 const sessionCookieName = "teenclean_session";
 const authStateCookieName = "teenclean_auth_state";
@@ -703,6 +702,7 @@ async function requireAuth(req, res, next) {
   try {
     const user = await sessionUser(req);
     if (!user) return res.status(401).json({ error: "Sign in is required." });
+    if (user.role !== "owner") return res.status(403).json({ error: "This workspace supports owner accounts only." });
     req.authUser = user;
     next();
   } catch (error) {
@@ -1040,7 +1040,7 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/auth/config", (_req, res) => {
   const state = randomBytes(24).toString("base64url");
   res.setHeader("Set-Cookie", cookie(authStateCookieName, state, { maxAge: 10 * 60 * 1000 }));
-  res.json({ enabled: Boolean(googleClientId && pool), clientId: googleClientId, state, signupCodeRequired: Boolean(employeeAccessCode || ownerAccessCode) });
+  res.json({ enabled: Boolean(googleClientId && pool), clientId: googleClientId, state, signupCodeRequired: Boolean(ownerAccessCode) });
 });
 
 app.get("/api/auth/session", async (req, res, next) => {
@@ -1086,8 +1086,8 @@ app.post("/api/auth/register", requireDatabase, async (req, res, next) => {
     const age = Number(req.body.age);
     const role = req.body.role;
     if (!Number.isInteger(age) || age < 13 || age > 120) return res.status(400).json({ error: "Enter an age between 13 and 120." });
-    if (role !== "owner" && role !== "employee") return res.status(400).json({ error: "Choose owner or employee." });
-    const requiredCode = role === "employee" ? employeeAccessCode : ownerAccessCode;
+    if (role !== "owner") return res.status(400).json({ error: "This workspace supports owner accounts only." });
+    const requiredCode = ownerAccessCode;
     if (!requiredCode) return res.status(503).json({ error: `The ${role} signup code is not configured. Contact the owner.` });
     if (requiredCode && req.body.accessCode !== requiredCode) return res.status(403).json({ error: `The ${role} access code is incorrect.` });
     const profile = await verifyGoogleCredential(req.body.credential);
@@ -1835,381 +1835,25 @@ const earningSelect = `
   join customers on customers.id = jobs.customer_id
   left join contract_submissions on contract_submissions.id = es.contract_submission_id`;
 
-app.get("/api/employee/bootstrap", requireDatabase, allowEmployeeOrOwner, async (req, res, next) => {
-  try {
-    try {
-      await refreshSheetsIfStale();
-    } catch (syncError) {
-      console.error("Employee automatic sheet sync failed:", syncError);
-    }
-    const subject = await employeeSubject(req);
-    const jobsResult = await pool.query(
-      `select jobs.* from jobs
-       join job_assignments on job_assignments.job_id = jobs.id
-       where job_assignments.employee_id = $1
-         and jobs.date between current_date - 7 and current_date + 7
-       order by jobs.date asc, jobs.time asc`,
-      [subject.id],
-    );
-    const customerIds = [...new Set(jobsResult.rows.map((row) => row.customer_id))];
-    const [customersResult, assignmentsResult, earningsResult, contractsResult, payoutsResult] = await Promise.all([
-      customerIds.length
-        ? pool.query("select id, name, phone, address, notes from customers where id = any($1::text[]) order by name", [customerIds])
-        : Promise.resolve({ rows: [] }),
-      pool.query(
-        `select ja.*, ua.name as employee_name from job_assignments ja
-         join user_accounts ua on ua.id = ja.employee_id
-         join jobs on jobs.id = ja.job_id
-         where ja.employee_id = $1 and jobs.date between current_date - 7 and current_date + 7`,
-        [subject.id],
-      ),
-      pool.query(`${earningSelect} where es.employee_id = $1 order by jobs.date desc`, [subject.id]),
-      pool.query(
-        `select cs.*, ua.name as employee_name from contract_submissions cs
-         join user_accounts ua on ua.id = cs.employee_id
-         where cs.employee_id = $1 order by cs.created_at desc`,
-        [subject.id],
-      ),
-      pool.query("select payouts.*, ua.name as employee_name from payouts join user_accounts ua on ua.id = payouts.employee_id where payouts.employee_id = $1 order by paid_at desc", [subject.id]),
-    ]);
-    const customers = customersResult.rows.map((row) => ({
-      id: row.id, name: row.name, phone: row.phone, email: "", address: row.address,
-      notes: row.notes, insights: [],
-    }));
-    const jobs = jobsResult.rows.map((row) => ({
-      ...toJob(row), tipAmount: 0, paymentMethod: undefined,
-    }));
-    res.json({
-      employee: toEmployeeProfile(subject),
-      preview: req.authUser.role === "owner",
-      customers,
-      jobs,
-      assignments: assignmentsResult.rows.map(toAssignment),
-      earnings: earningsResult.rows.map(toEarning),
-      contracts: contractsResult.rows.map(toContract),
-      solicitations: [],
-      payouts: payoutsResult.rows.map((row) => ({
-        id: row.id, employeeId: row.employee_id, employeeName: row.employee_name,
-        amount: Number(row.amount), paidAt: row.paid_at?.toISOString?.() ?? row.paid_at,
-        earningIds: row.earning_ids ?? [],
-      })),
-    });
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.patch("/api/employee/jobs/:id", requireDatabase, allowEmployeeOrOwner, async (req, res, next) => {
-  try {
-    const subject = await employeeSubject(req);
-    const scheduledJob = await pool.query(
-      "select 1 from jobs where id = $1 and date between current_date - 7 and current_date + 7",
-      [req.params.id],
-    );
-    if (!scheduledJob.rows[0]) return res.status(404).json({ error: "Job is outside the employee schedule window." });
-    const assignment = await pool.query(
-      `select 1 from job_assignments
-       join jobs on jobs.id = job_assignments.job_id
-       where job_assignments.job_id = $1 and job_assignments.employee_id = $2
-         and jobs.date between current_date - 7 and current_date + 7`,
-      [req.params.id, subject.id],
-    );
-    if (!assignment.rows[0] && req.authUser.role !== "owner") return res.status(403).json({ error: "This job is not assigned to you." });
-    const allowedStatuses = ["scheduled", "in progress", "completed", "canceled", "past due"];
-    const status = Object.hasOwn(req.body, "status") ? req.body.status : undefined;
-    const notes = Object.hasOwn(req.body, "notes") ? String(req.body.notes ?? "") : undefined;
-    if (status !== undefined && !allowedStatuses.includes(status)) return res.status(400).json({ error: "Job status is invalid." });
-    if (status === undefined && notes === undefined) return res.status(400).json({ error: "Status or notes are required." });
-    const jobPriceResult = status === "completed" ? await pool.query("select price from jobs where id = $1", [req.params.id]) : null;
-    const completedPrice = Number(jobPriceResult?.rows[0]?.price ?? 0);
-    const sheetRow = { jobId: req.params.id };
-    if (status !== undefined) sheetRow.status = status;
-    if (notes !== undefined) sheetRow.notes = notes;
-    if (status === "completed") Object.assign(sheetRow, { paymentStatus: "paid", amountPaid: completedPrice });
-    await runSheetAction("updateJob", sheetRow);
-    const result = await pool.query(
-      `update jobs set status = coalesce($2, status), notes = coalesce($3, notes),
-       payment_status = case when coalesce($2, status) = 'completed' then 'paid' else 'unpaid' end,
-       amount_paid = case when coalesce($2, status) = 'completed' then price else 0 end,
-       website_overrides = website_overrides || $4::jsonb, updated_at = now()
-       where id = $1 and date between current_date - 7 and current_date + 7 returning *`,
-      [req.params.id, status, notes, JSON.stringify({ ...(status !== undefined ? { status: true } : {}), ...(notes !== undefined ? { notes: true } : {}) })],
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: "Job is outside the employee schedule window." });
-    await audit(req.authUser.id, "employee_job_update", "job", req.params.id, { status, notesChanged: notes !== undefined });
-    res.json({ ...toJob(result.rows[0]), tipAmount: 0, paymentMethod: undefined });
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.post("/api/employee/earnings", requireDatabase, allowEmployeeOrOwner, async (req, res, next) => {
-  try {
-    const subject = await employeeSubject(req);
-    const {
-      jobId, tipAmount = 0, contractSubmissionId = null, hasUpsell = false,
-      upsellDescription = "", upsellOutcome = "", upsellQuotedAmount = 0, upsellNotes = "",
-    } = req.body;
-    const tip = Number(tipAmount);
-    const quote = Number(upsellQuotedAmount);
-    const validOutcomes = ["accepted", "declined", "follow-up"];
-    if (!jobId || !Number.isFinite(tip) || tip < 0) return res.status(400).json({ error: "Enter a valid customer tip." });
-    if (hasUpsell && (typeof upsellDescription !== "string" || !upsellDescription.trim() || !validOutcomes.includes(upsellOutcome) || !Number.isFinite(quote) || quote < 0)) {
-      return res.status(400).json({ error: "Enter the service offered, customer result, and a valid quoted price." });
-    }
-    if (hasUpsell && upsellOutcome === "accepted" && quote <= 0) return res.status(400).json({ error: "An accepted upsell must have a price greater than zero." });
-    if (String(upsellDescription).length > 500 || String(upsellNotes).length > 2000) return res.status(400).json({ error: "The upsell details are too long." });
-    const assignment = await pool.query("select * from job_assignments where job_id = $1 and employee_id = $2", [jobId, subject.id]);
-    if (!assignment.rows[0]) return res.status(403).json({ error: "This job is not assigned to this employee." });
-    const existing = await pool.query("select status from earning_submissions where job_id = $1 and employee_id = $2", [jobId, subject.id]);
-    if (["approved", "paid"].includes(existing.rows[0]?.status)) return res.status(409).json({ error: "A finalized earnings record cannot be changed." });
-    if (contractSubmissionId) {
-      const contract = await pool.query("select 1 from contract_submissions where id = $1 and employee_id = $2 and job_id = $3 and status <> 'rejected'", [contractSubmissionId, subject.id, jobId]);
-      if (!contract.rows[0]) return res.status(400).json({ error: "The contract submission was not found." });
-    }
-    const result = await pool.query(
-      `insert into earning_submissions (
-         job_id, employee_id, tip_amount, upsell_amount, contract_submission_id,
-         upsell_description, upsell_outcome, upsell_quoted_amount, upsell_notes, status, owner_note
-       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', '')
-       on conflict (job_id, employee_id) do update set tip_amount = excluded.tip_amount,
-         contract_submission_id = excluded.contract_submission_id,
-         upsell_amount = excluded.upsell_amount, upsell_description = excluded.upsell_description,
-         upsell_outcome = excluded.upsell_outcome, upsell_quoted_amount = excluded.upsell_quoted_amount,
-         upsell_notes = excluded.upsell_notes,
-         status = 'pending', owner_note = '', reviewed_by = null, reviewed_at = null, updated_at = now()
-       returning id`,
-      [
-        jobId, subject.id, tip, hasUpsell && upsellOutcome === "accepted" ? quote : 0, contractSubmissionId,
-        hasUpsell ? upsellDescription.trim() : "", hasUpsell ? upsellOutcome : "",
-        hasUpsell ? quote : 0, hasUpsell ? String(upsellNotes).trim() : "",
-      ],
-    );
-    const full = await pool.query(`${earningSelect} where es.id = $1`, [result.rows[0].id]);
-    await audit(req.authUser.id, "submit_earnings", "earning", result.rows[0].id, { jobId, tip, hasUpsell, upsellOutcome, upsellQuotedAmount: hasUpsell ? quote : 0 });
-    res.status(201).json(toEarning(full.rows[0]));
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.post("/api/employee/upsells", requireDatabase, allowEmployeeOrOwner, async (req, res, next) => {
-  try {
-    const subject = await employeeSubject(req);
-    const { jobId, description, outcome, quotedAmount, notes = "" } = req.body;
-    const quote = Number(quotedAmount);
-    const validOutcomes = ["accepted", "declined", "follow-up"];
-    if (!jobId || typeof description !== "string" || !description.trim() || !validOutcomes.includes(outcome) || !Number.isFinite(quote) || quote < 0) {
-      return res.status(400).json({ error: "Enter the service offered, customer result, and a valid quoted amount." });
-    }
-    if (outcome === "accepted" && quote <= 0) return res.status(400).json({ error: "An accepted upsell must have a price greater than zero." });
-    if (description.length > 500 || String(notes).length > 2000) return res.status(400).json({ error: "The upsell details are too long." });
-    const assignment = await pool.query("select 1 from job_assignments where job_id = $1 and employee_id = $2", [jobId, subject.id]);
-    if (!assignment.rows[0]) return res.status(403).json({ error: "This job is not assigned to this employee." });
-    const existing = await pool.query("select status from earning_submissions where job_id = $1 and employee_id = $2", [jobId, subject.id]);
-    if (["approved", "paid"].includes(existing.rows[0]?.status)) return res.status(409).json({ error: "A finalized earnings record cannot be changed." });
-    const result = await pool.query(
-      `insert into earning_submissions (
-         job_id, employee_id, upsell_amount, upsell_description, upsell_outcome,
-         upsell_quoted_amount, upsell_notes, status, owner_note
-       ) values ($1, $2, $3, $4, $5, $6, $7, $8, '')
-       on conflict (job_id, employee_id) do update set
-         upsell_amount = excluded.upsell_amount, upsell_description = excluded.upsell_description,
-         upsell_outcome = excluded.upsell_outcome, upsell_quoted_amount = excluded.upsell_quoted_amount,
-         upsell_notes = excluded.upsell_notes, status = excluded.status, owner_note = '',
-         reviewed_by = null, reviewed_at = null, updated_at = now()
-       returning id`,
-      [jobId, subject.id, outcome === "accepted" ? quote : 0, description.trim(), outcome, quote, String(notes).trim(), outcome === "accepted" ? "pending" : "draft"],
-    );
-    const full = await pool.query(`${earningSelect} where es.id = $1`, [result.rows[0].id]);
-    await audit(req.authUser.id, "record_upsell", "earning", result.rows[0].id, { jobId, description: description.trim(), outcome, quotedAmount: quote });
-    res.status(201).json(toEarning(full.rows[0]));
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.post("/api/employee/contracts", requireDatabase, allowEmployeeOrOwner, async (req, res, next) => {
-  try {
-    const subject = await employeeSubject(req);
-    const {
-      customerName, customerPhone = "", customerEmail = "", serviceAddress,
-      serviceDescription, frequency, relatedJob = "", price, notes = "", agreementText,
-      signerName, signatureData, electronicConsent, jobId = null,
-    } = req.body;
-    const numericPrice = Number(price);
-    const requiredText = [customerName, serviceAddress, serviceDescription, frequency, signerName, agreementText];
-    if (requiredText.some((value) => typeof value !== "string" || !value.trim()) || !Number.isFinite(numericPrice) || numericPrice < 0) {
-      return res.status(400).json({ error: "Complete the customer, service, frequency, price, and signature details." });
-    }
-    if (customerEmail && (typeof customerEmail !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim()))) {
-      return res.status(400).json({ error: "Enter a valid customer email address or leave it blank." });
-    }
-    if (agreementText.length > 12_000 || notes.length > 5_000 || signatureData?.length > 750_000) {
-      return res.status(400).json({ error: "The contract submission is too large." });
-    }
-    if (electronicConsent !== true || typeof signatureData !== "string" || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(signatureData)) {
-      return res.status(400).json({ error: "The homeowner must consent and provide an electronic signature." });
-    }
-    if (jobId) {
-      const assignment = await pool.query("select 1 from job_assignments where job_id = $1 and employee_id = $2", [jobId, subject.id]);
-      if (!assignment.rows[0] && req.authUser.role !== "owner") return res.status(403).json({ error: "The related job is not assigned to you." });
-    }
-    const result = await pool.query(
-      `insert into contract_submissions (
-         employee_id, job_id, customer_name, customer_phone, customer_email, service_address,
-         service_description, frequency, related_job, price, notes, agreement_text, signer_name,
-         signature_data, electronic_consent, signed_at
-       ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, now()) returning *`,
-      [
-        subject.id, jobId || null, customerName.trim(), String(customerPhone).trim(), String(customerEmail).trim(),
-        serviceAddress.trim(), serviceDescription.trim(), frequency.trim(), relatedJob.trim(), numericPrice,
-        String(notes).trim(), agreementText.trim(), signerName.trim(), signatureData,
-      ],
-    );
-    if (jobId) {
-      await pool.query(
-        `insert into earning_submissions (job_id, employee_id, contract_submission_id, status)
-         values ($1, $2, $3, 'pending')
-         on conflict (job_id, employee_id) do update set contract_submission_id = excluded.contract_submission_id,
-           status = 'pending', owner_note = '', reviewed_by = null, reviewed_at = null, updated_at = now()`,
-        [jobId, subject.id, result.rows[0].id],
-      );
-    }
-    await audit(req.authUser.id, "submit_signed_contract", "contract", result.rows[0].id, {
-      customerName: customerName.trim(), frequency: frequency.trim(), relatedJob: relatedJob.trim(), price: numericPrice,
-    });
-    res.status(201).json(toContract({ ...result.rows[0], employee_name: subject.name }));
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.get("/api/owner/operations", requireDatabase, requireOwner, async (_req, res, next) => {
-  try {
-    const [employees, assignments, earnings, contracts, payouts] = await Promise.all([
-      pool.query("select * from user_accounts where role = 'employee' order by active desc, name asc"),
-      pool.query(`select ja.*, ua.name as employee_name from job_assignments ja join user_accounts ua on ua.id = ja.employee_id order by assigned_at desc`),
-      pool.query(`${earningSelect} order by es.created_at desc`),
-      pool.query(`select cs.*, ua.name as employee_name from contract_submissions cs join user_accounts ua on ua.id = cs.employee_id order by cs.created_at desc`),
-      pool.query(`select payouts.*, ua.name as employee_name from payouts join user_accounts ua on ua.id = payouts.employee_id order by paid_at desc`),
-    ]);
-    res.json({
-      employees: employees.rows.map(toEmployeeProfile),
-      assignments: assignments.rows.map(toAssignment),
-      earnings: earnings.rows.map(toEarning),
-      contracts: contracts.rows.map(toContract),
-      payouts: payouts.rows.map((row) => ({ id: row.id, employeeId: row.employee_id, employeeName: row.employee_name, amount: Number(row.amount), paidAt: row.paid_at?.toISOString?.() ?? row.paid_at, earningIds: row.earning_ids ?? [] })),
-    });
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.patch("/api/owner/employees/:id", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const fields = ["active", "baseCommissionPct", "contractBonusPct", "tipSharePct"];
-    if (!fields.some((field) => Object.hasOwn(req.body, field))) return res.status(400).json({ error: "No employee settings were provided." });
-    for (const field of fields.slice(1)) {
-      if (Object.hasOwn(req.body, field) && (!Number.isFinite(Number(req.body[field])) || Number(req.body[field]) < 0 || Number(req.body[field]) > 1)) {
-        return res.status(400).json({ error: "Commission percentages must be between 0% and 100%." });
-      }
-    }
-    const result = await pool.query(
-      `update user_accounts set active = coalesce($2, active), base_commission_pct = coalesce($3, base_commission_pct),
-       upsell_commission_pct = coalesce($4, upsell_commission_pct), contract_bonus_pct = coalesce($5, contract_bonus_pct),
-       tip_share_pct = coalesce($6, tip_share_pct), updated_at = now()
-       where id = $1 and role = 'employee' returning *`,
-      [req.params.id, req.body.active, req.body.baseCommissionPct, standardUpsellCommissionPct, req.body.contractBonusPct, req.body.tipSharePct],
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: "Employee was not found." });
-    if (req.body.active === false) await pool.query("delete from auth_sessions where user_id = $1", [req.params.id]);
-    await audit(req.authUser.id, "update_employee", "employee", req.params.id, req.body);
-    res.json(toEmployeeProfile(result.rows[0]));
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.post("/api/owner/assignments", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const { jobId, employeeId } = req.body;
-    const employee = await pool.query("select * from user_accounts where id = $1 and role = 'employee' and active = true", [employeeId]);
-    const job = await pool.query("select * from jobs where id = $1", [jobId]);
-    if (!employee.rows[0] || !job.rows[0]) return res.status(400).json({ error: "Choose an active employee and valid job." });
-    const profile = employee.rows[0];
-    const result = await pool.query(
-      `insert into job_assignments (job_id, employee_id, assigned_by, original_job_price, base_commission_pct, upsell_commission_pct, contract_bonus_pct, tip_share_pct)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)
-       on conflict (job_id) do update set employee_id = excluded.employee_id, assigned_by = excluded.assigned_by,
-         original_job_price = excluded.original_job_price, base_commission_pct = excluded.base_commission_pct,
-         upsell_commission_pct = excluded.upsell_commission_pct, contract_bonus_pct = excluded.contract_bonus_pct,
-         tip_share_pct = excluded.tip_share_pct, assigned_at = now() returning *`,
-      [jobId, employeeId, req.authUser.id, job.rows[0].price, profile.base_commission_pct, standardUpsellCommissionPct, profile.contract_bonus_pct, profile.tip_share_pct],
-    );
-    await audit(req.authUser.id, "assign_job", "job", jobId, { employeeId });
-    res.status(201).json(toAssignment({ ...result.rows[0], employee_name: profile.name }));
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.delete("/api/owner/assignments/:jobId", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const approved = await pool.query("select 1 from earning_submissions where job_id = $1 and status in ('approved', 'paid')", [req.params.jobId]);
-    if (approved.rows[0]) return res.status(409).json({ error: "A paid or approved earning record prevents reassignment." });
-    await pool.query("delete from earning_submissions where job_id = $1", [req.params.jobId]);
-    const result = await pool.query("delete from job_assignments where job_id = $1 returning job_id", [req.params.jobId]);
-    await audit(req.authUser.id, "unassign_job", "job", req.params.jobId);
-    res.json({ deleted: Boolean(result.rows[0]) });
-  } catch (error) {
-    next(error);
-  }
-});
 
-app.post("/api/owner/earnings/:id/review", requireDatabase, requireOwner, async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const { decision, ownerNote = "" } = req.body;
-    if (!['approved', 'rejected'].includes(decision)) return res.status(400).json({ error: "Choose approved or rejected." });
-    const current = await client.query(`${earningSelect} where es.id = $1`, [req.params.id]);
-    if (!current.rows[0]) return res.status(404).json({ error: "Earnings submission was not found." });
-    if (decision === "approved" && current.rows[0].job_date && current.rows[0].status === "paid") return res.status(409).json({ error: "Paid earnings cannot be reviewed again." });
-    if (decision === "approved") {
-      if (current.rows[0].job_status === "canceled") return res.status(409).json({ error: "Canceled jobs cannot have earnings approved." });
-      if (current.rows[0].job_status !== "completed" && !current.rows[0].job_is_due) return res.status(409).json({ error: "Future jobs must be completed before approving their earnings." });
-      if (current.rows[0].contract_submission_id && current.rows[0].contract_status !== "approved") return res.status(409).json({ error: "Approve the related contract before approving its bonus." });
-      const finalPrice = Number(current.rows[0].original_job_price) + Number(current.rows[0].upsell_amount);
-      const tipAmount = Number(current.rows[0].tip_amount);
-      await runSheetAction("updateJob", {
-        jobId: current.rows[0].job_id,
-        status: "completed",
-        price: finalPrice,
-        tipAmount,
-        paymentStatus: "paid",
-        amountPaid: finalPrice,
-      });
-      await client.query(
-        `update jobs set status = 'completed', price = $2, tip_amount = $3,
-         payment_status = 'paid', amount_paid = $2,
-         website_overrides = website_overrides || $4::jsonb, updated_at = now()
-         where id = $1`,
-        [current.rows[0].job_id, finalPrice, tipAmount, JSON.stringify({ status: true, price: true, tipAmount: true, paymentStatus: true, amountPaid: true })],
-      );
-    }
-    await client.query(
-      "update earning_submissions set status = $2, owner_note = $3, reviewed_by = $4, reviewed_at = now(), updated_at = now() where id = $1",
-      [req.params.id, decision, ownerNote, req.authUser.id],
-    );
-    await audit(req.authUser.id, `earning_${decision}`, "earning", req.params.id, { ownerNote });
-    const result = await client.query(`${earningSelect} where es.id = $1`, [req.params.id]);
-    res.json(toEarning(result.rows[0]));
-  } catch (error) {
-    next(error);
-  } finally {
-    client.release();
-  }
-});
+
+
+
+
+
+
+
+
+
+
 
 function servicePlanFromContractFrequency(value) {
   const text = String(value || "").toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
@@ -2221,79 +1865,9 @@ function servicePlanFromContractFrequency(value) {
   return null;
 }
 
-app.post("/api/owner/contracts/:id/review", requireDatabase, requireOwner, async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const { decision, ownerNote = "" } = req.body;
-    if (!['approved', 'rejected'].includes(decision)) return res.status(400).json({ error: "Choose approved or rejected." });
-    await client.query("begin");
-    const current = await client.query("select * from contract_submissions where id = $1 for update", [req.params.id]);
-    if (!current.rows[0]) { await client.query("rollback"); return res.status(404).json({ error: "Contract was not found." }); }
-    if (decision === "approved") {
-      let customer = await client.query("select * from customers where lower(name) = lower($1) order by created_at asc limit 1", [current.rows[0].customer_name]);
-      if (!customer.rows[0]) {
-        const customerId = `contract-customer-${randomUUID()}`;
-        customer = await client.query("insert into customers (id, name) values ($1, $2) returning *", [customerId, current.rows[0].customer_name]);
-      }
-      const planFrequency = servicePlanFromContractFrequency(current.rows[0].frequency);
-      if (planFrequency) {
-        const renewal = new Date();
-        renewal.setMonth(renewal.getMonth() + planFrequency.months);
-        const planId = `employee-contract-${current.rows[0].id}`;
-        await client.query(
-          `insert into service_plans (id, type, customer_id, renewal_date, price, payment_status, notes)
-           values ($1, $2, $3, $4, $5, 'unpaid', $6)
-           on conflict (id) do update set type = excluded.type, customer_id = excluded.customer_id,
-             renewal_date = excluded.renewal_date, price = excluded.price, notes = excluded.notes, updated_at = now()`,
-          [planId, planFrequency.type, customer.rows[0].id, renewal.toISOString().slice(0, 10), current.rows[0].price, current.rows[0].notes],
-        );
-      }
-    }
-    const updated = await client.query(
-      `update contract_submissions set status = $2, owner_note = $3, reviewed_by = $4,
-       reviewed_at = now(), updated_at = now() where id = $1 returning *`,
-      [req.params.id, decision, ownerNote, req.authUser.id],
-    );
-    await client.query("commit");
-    await audit(req.authUser.id, `contract_${decision}`, "contract", req.params.id, { ownerNote });
-    const employee = await pool.query("select name from user_accounts where id = $1", [updated.rows[0].employee_id]);
-    res.json(toContract({ ...updated.rows[0], employee_name: employee.rows[0]?.name }));
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    next(error);
-  } finally {
-    client.release();
-  }
-});
 
-app.post("/api/owner/payouts", requireDatabase, requireOwner, async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const earningIds = [...new Set(Array.isArray(req.body.earningIds) ? req.body.earningIds : [])];
-    if (!earningIds.length) return res.status(400).json({ error: "Select approved earnings to pay." });
-    const payrollLinked = await client.query("select 1 from payroll_run_lines where earning_submission_id = any($1::uuid[]) limit 1", [earningIds]);
-    if (payrollLinked.rows[0]) return res.status(409).json({ error: "These earnings are already included in weekly payroll. Record payment from the Payroll tab." });
-    const rows = await client.query(`${earningSelect} where es.id = any($1::uuid[]) and es.status = 'approved'`, [earningIds]);
-    if (rows.rows.length !== earningIds.length) return res.status(400).json({ error: "Every selected earning must be approved and unpaid." });
-    const employeeIds = new Set(rows.rows.map((row) => row.employee_id));
-    if (employeeIds.size !== 1) return res.status(400).json({ error: "Create one payout per employee." });
-    const amount = rows.rows.reduce((sum, row) => sum + earningAmounts(row).totalEarnings, 0);
-    await client.query("begin");
-    const payout = await client.query(
-      "insert into payouts (employee_id, amount, earning_ids, paid_by) values ($1, $2, $3, $4) returning *",
-      [rows.rows[0].employee_id, amount, earningIds, req.authUser.id],
-    );
-    await client.query("update earning_submissions set status = 'paid', paid_at = now(), updated_at = now() where id = any($1::uuid[])", [earningIds]);
-    await client.query("commit");
-    await audit(req.authUser.id, "create_payout", "payout", payout.rows[0].id, { earningIds, amount });
-    res.status(201).json({ id: payout.rows[0].id, employeeId: payout.rows[0].employee_id, employeeName: rows.rows[0].employee_name, amount, paidAt: payout.rows[0].paid_at.toISOString(), earningIds });
-  } catch (error) {
-    await client.query("rollback").catch(() => undefined);
-    next(error);
-  } finally {
-    client.release();
-  }
-});
+
+
 
 function validatePayrollDates(periodStart, periodEnd, payday) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(periodStart || "") || !/^\d{4}-\d{2}-\d{2}$/.test(periodEnd || "") || !/^\d{4}-\d{2}-\d{2}$/.test(payday || "")) return "Valid payroll dates are required.";
@@ -2304,142 +1878,22 @@ function validatePayrollDates(periodStart, periodEnd, payday) {
   return "";
 }
 
-app.get("/api/owner/payroll", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const requestedStart = String(req.query.periodStart || "");
-    const businessDateParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-    const businessDate = Object.fromEntries(businessDateParts.map((part) => [part.type, part.value]));
-    const todayIso = `${businessDate.year}-${businessDate.month}-${businessDate.day}`;
-    const today = new Date(`${/^\d{4}-\d{2}-\d{2}$/.test(requestedStart) ? requestedStart : todayIso}T12:00:00Z`);
-    const day = today.getUTCDay();
-    const start = new Date(today); start.setUTCDate(today.getUTCDate() - ((day + 6) % 7));
-    const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
-    const payday = new Date(end); payday.setUTCDate(end.getUTCDate() + 5);
-    const periodStart = start.toISOString().slice(0, 10), periodEnd = end.toISOString().slice(0, 10);
-    const [runs, eligible] = await Promise.all([loadPayrollRuns(pool), eligiblePayrollLines(pool, periodEnd)]);
-    res.json({ runs, preview: { periodStart, periodEnd, payday: payday.toISOString().slice(0, 10), eligibleLines: eligible.lines, missingApprovals: eligible.missingApprovals } });
-  } catch (error) { next(error); }
-});
 
-app.post("/api/owner/payroll", requireDatabase, requireOwner, async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const { periodStart, periodEnd, payday } = req.body;
-    const dateError = validatePayrollDates(periodStart, periodEnd, payday);
-    if (dateError) return res.status(400).json({ error: dateError });
-    await client.query("begin");
-    const existing = await client.query("select id from payroll_runs where period_start = $1 and period_end = $2", [periodStart, periodEnd]);
-    if (existing.rows[0]) { await client.query("rollback"); return res.status(409).json({ error: "A payroll run already exists for this period." }); }
-    const eligible = await eligiblePayrollLines(client, periodEnd);
-    if (!eligible.lines.length) { await client.query("rollback"); return res.status(400).json({ error: "No unpaid completed-job earnings are available for this period." }); }
-    const run = await client.query("insert into payroll_runs (period_start, period_end, payday, created_by) values ($1, $2, $3, $4) returning id", [periodStart, periodEnd, payday, req.authUser.id]);
-    for (const line of eligible.lines) {
-      await client.query(
-        `insert into payroll_run_lines (payroll_run_id, employee_id, job_id, earning_submission_id, source_key, line_type, description, customer_name, work_date, amount)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [run.rows[0].id, line.employeeId, line.jobId, line.earningSubmissionId, line.sourceKey, line.lineType, line.description, line.customerName, line.workDate, line.amount],
-      );
-    }
-    await client.query("commit");
-    await audit(req.authUser.id, "create_payroll", "payroll", run.rows[0].id, { periodStart, periodEnd, payday, lineCount: eligible.lines.length });
-    const runs = await loadPayrollRuns(pool);
-    res.status(201).json(runs.find((item) => item.id === run.rows[0].id));
-  } catch (error) { await client.query("rollback").catch(() => undefined); next(error); } finally { client.release(); }
-});
 
-app.post("/api/owner/payroll/:id/adjustments", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const { employeeId, adjustmentType, category, description, amount } = req.body;
-    const value = Number(amount);
-    if (!employeeId || !["addition", "deduction"].includes(adjustmentType) || !["bonus", "reimbursement", "deduction", "correction", "other"].includes(category) || !description?.trim() || !Number.isFinite(value) || value <= 0) return res.status(400).json({ error: "Employee, adjustment details, and a positive amount are required." });
-    const run = await pool.query("select status from payroll_runs where id = $1", [req.params.id]);
-    if (!run.rows[0]) return res.status(404).json({ error: "Payroll run not found." });
-    if (run.rows[0].status !== "draft") return res.status(409).json({ error: "Finalized payroll runs are locked." });
-    const employee = await pool.query("select 1 from user_accounts where id = $1 and role = 'employee'", [employeeId]);
-    if (!employee.rows[0]) return res.status(400).json({ error: "Employee not found." });
-    const result = await pool.query(
-      "insert into payroll_adjustments (payroll_run_id, employee_id, adjustment_type, category, description, amount, created_by) values ($1,$2,$3,$4,$5,$6,$7) returning id",
-      [req.params.id, employeeId, adjustmentType, category, description.trim(), value, req.authUser.id],
-    );
-    await audit(req.authUser.id, "add_payroll_adjustment", "payroll", req.params.id, { adjustmentId: result.rows[0].id, employeeId, adjustmentType, category, amount: value });
-    const runs = await loadPayrollRuns(pool); res.status(201).json(runs.find((item) => item.id === req.params.id));
-  } catch (error) { next(error); }
-});
 
-app.delete("/api/owner/payroll/:runId/adjustments/:adjustmentId", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const run = await pool.query("select status from payroll_runs where id = $1", [req.params.runId]);
-    if (!run.rows[0]) return res.status(404).json({ error: "Payroll run not found." });
-    if (run.rows[0].status !== "draft") return res.status(409).json({ error: "Finalized payroll runs are locked." });
-    const result = await pool.query("delete from payroll_adjustments where id = $1 and payroll_run_id = $2 returning id", [req.params.adjustmentId, req.params.runId]);
-    if (!result.rows[0]) return res.status(404).json({ error: "Adjustment not found." });
-    await audit(req.authUser.id, "delete_payroll_adjustment", "payroll", req.params.runId, { adjustmentId: req.params.adjustmentId });
-    const runs = await loadPayrollRuns(pool); res.json(runs.find((item) => item.id === req.params.runId));
-  } catch (error) { next(error); }
-});
 
-app.post("/api/owner/payroll/:id/finalize", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const runs = await loadPayrollRuns(pool); const run = runs.find((item) => item.id === req.params.id);
-    if (!run) return res.status(404).json({ error: "Payroll run not found." });
-    if (run.status !== "draft") return res.status(409).json({ error: "Only draft payroll can be finalized." });
-    const employeeIds = new Set([...run.lines.map((line) => line.employeeId), ...run.adjustments.map((item) => item.employeeId)]);
-    if (!employeeIds.size) return res.status(400).json({ error: "Payroll has no employee earnings." });
-    for (const employeeId of employeeIds) {
-      const totals = payrollTotals(run.lines.filter((line) => line.employeeId === employeeId), run.adjustments.filter((item) => item.employeeId === employeeId));
-      if (totals.netPay < 0) return res.status(400).json({ error: "Deductions cannot make an employee payment negative." });
-    }
-    await pool.query("update payroll_runs set status = 'finalized', finalized_by = $2, finalized_at = now(), updated_at = now() where id = $1", [req.params.id, req.authUser.id]);
-    await audit(req.authUser.id, "finalize_payroll", "payroll", req.params.id, { netPay: run.netPay });
-    const updated = await loadPayrollRuns(pool); res.json(updated.find((item) => item.id === req.params.id));
-  } catch (error) { next(error); }
-});
 
-app.post("/api/owner/payroll/:id/payments", requireDatabase, requireOwner, async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const { employeeId, paymentMethod, reference = "", note = "", paidAt } = req.body;
-    if (!employeeId || !["bank", "check"].includes(paymentMethod) || !paidAt) return res.status(400).json({ error: "Employee, payment method, and paid date are required." });
-    const runs = await loadPayrollRuns(client); const run = runs.find((item) => item.id === req.params.id);
-    if (!run) return res.status(404).json({ error: "Payroll run not found." });
-    if (run.status !== "finalized") return res.status(409).json({ error: "Payroll must be finalized before recording payments." });
-    if (run.payments.some((payment) => payment.employeeId === employeeId)) return res.status(409).json({ error: "Payment is already recorded for this employee." });
-    const totals = payrollTotals(run.lines.filter((line) => line.employeeId === employeeId), run.adjustments.filter((item) => item.employeeId === employeeId));
-    if (totals.netPay < 0 || (!run.lines.some((line) => line.employeeId === employeeId) && !run.adjustments.some((item) => item.employeeId === employeeId))) return res.status(400).json({ error: "Employee is not included in this payroll." });
-    await client.query("begin");
-    await client.query("insert into payroll_payments (payroll_run_id, employee_id, amount, payment_method, reference, note, paid_at, recorded_by) values ($1,$2,$3,$4,$5,$6,$7,$8)", [req.params.id, employeeId, totals.netPay, paymentMethod, String(reference).trim(), String(note).trim(), paidAt, req.authUser.id]);
-    const earningIds = run.lines.filter((line) => line.employeeId === employeeId).map((line) => line.jobId).filter(Boolean);
-    if (earningIds.length) await client.query("update earning_submissions set status = 'paid', paid_at = $2, updated_at = now() where employee_id = $1 and job_id = any($3::text[]) and status = 'approved'", [employeeId, paidAt, earningIds]);
-    const people = new Set([...run.lines.map((line) => line.employeeId), ...run.adjustments.map((item) => item.employeeId)]);
-    const paymentCount = await client.query("select count(distinct employee_id)::int as count from payroll_payments where payroll_run_id = $1", [req.params.id]);
-    if (paymentCount.rows[0].count >= people.size) await client.query("update payroll_runs set status = 'paid', updated_at = now() where id = $1", [req.params.id]);
-    await client.query("commit");
-    await audit(req.authUser.id, "record_payroll_payment", "payroll", req.params.id, { employeeId, amount: totals.netPay, paymentMethod });
-    const updated = await loadPayrollRuns(pool); res.status(201).json(updated.find((item) => item.id === req.params.id));
-  } catch (error) { await client.query("rollback").catch(() => undefined); next(error); } finally { client.release(); }
-});
+
+
+
+
+
+
 
 function csvCell(value) { return `"${String(value ?? "").replaceAll('"', '""')}"`; }
-app.get("/api/owner/payroll/:id/export.csv", requireDatabase, requireOwner, async (req, res, next) => {
-  try {
-    const runs = await loadPayrollRuns(pool); const run = runs.find((item) => item.id === req.params.id);
-    if (!run) return res.status(404).json({ error: "Payroll run not found." });
-    const rows = [["Employee", "Work date", "Type", "Description", "Customer", "Gross addition", "Deduction"]];
-    run.lines.forEach((line) => rows.push([line.employeeName, line.workDate, line.lineType, line.description, line.customerName, line.amount.toFixed(2), ""]));
-    run.adjustments.forEach((item) => rows.push([item.employeeName, "", item.category, item.description, "", item.adjustmentType === "addition" ? item.amount.toFixed(2) : "", item.adjustmentType === "deduction" ? item.amount.toFixed(2) : ""]));
-    rows.push(["TOTAL", "", "", "", "", (run.grossEarnings + run.totalAdditions).toFixed(2), run.totalDeductions.toFixed(2)]);
-    res.setHeader("Content-Type", "text/csv; charset=utf-8"); res.setHeader("Content-Disposition", `attachment; filename="payroll-${run.periodStart}.csv"`);
-    res.send(rows.map((row) => row.map(csvCell).join(",")).join("\n"));
-  } catch (error) { next(error); }
-});
 
-app.get("/api/employee/payroll", requireDatabase, allowEmployeeOrOwner, async (req, res, next) => {
-  try {
-    const subject = await employeeSubject(req, res);
-    if (!subject) return;
-    res.json({ statements: await loadPayrollRuns(pool, subject.id) });
-  } catch (error) { next(error); }
-});
+
+
 
 app.use(express.static(distPath));
 app.get(/.*/, (_req, res) => {

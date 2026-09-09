@@ -6,9 +6,7 @@ An independent pressure-washing business dashboard with fresh Git history and no
 
 - Owner dashboard and analytics; job creation, editing, calendar events, and recurring service plans.
 - Leads, follow-up reminders, personal notification inboxes, and job/solicitation maps.
-- Employee workspace, job assignments, contract generation and signatures, upsells, and earnings approval.
-- Contractor pay tracking and exports. This records internal payments; it does not run payroll or file taxes.
-- Google sign-in, owner/employee access controls, mobile layouts, and installable app support.
+- Solo-owner workspace, optional Google sign-in, mobile layouts, and installable app support.
 
 ## First setup
 
@@ -16,7 +14,7 @@ An independent pressure-washing business dashboard with fresh Git history and no
 2. Create a new Postgres database (a separate Supabase project is supported). Do not point this application at an existing business's database.
 3. Create `.env` from `.env.example` and enter the new database connection string in `DATABASE_URL`. Do not commit `.env`.
 4. Create a Google OAuth web client for this business. Add `http://localhost:4173` and the eventual deployed origin to its authorized JavaScript origins, then set `GOOGLE_CLIENT_ID`.
-5. Set distinct, random `AUTH_OWNER_CODE` and `AUTH_EMPLOYEE_CODE` values. Share the owner code only with the business owner. No previous accounts or access codes are included.
+5. Set a random `AUTH_OWNER_CODE`. Share this code only with the business owner. Signup supports owner accounts only. No previous accounts or access codes are included.
 6. Initialize the empty database with `node --env-file=.env server/migrate.mjs`.
 7. Run `npm run build`, then `node --env-file=.env server/index.mjs`. Open `http://localhost:4173` and register the first owner using Google and the owner code.
 
@@ -24,7 +22,7 @@ Before database and sign-in configuration, the application opens directly to an 
 
 ## Optional Google Sheets
 
-Leave `SHEETS_SYNC_URL` blank to use the website with its own database only. Job creation, editing, earnings approval, and other database workflows do not require a spreadsheet. The refresh button reloads database records when no spreadsheet is configured.
+Leave `SHEETS_SYNC_URL` blank to use the website with its own database only. Job creation, editing, and other database workflows do not require a spreadsheet. The refresh button reloads database records when no spreadsheet is configured.
 
 To enable spreadsheets later, create a separate spreadsheet and a compatible sync endpoint. Set the server-only `SHEETS_SYNC_URL` to that endpoint, and `VITE_JOBS_SHEET_URL` to the new spreadsheet's browser URL. Rebuild after changing a `VITE_` variable. The endpoint URL is not a normal spreadsheet sharing link.
 
@@ -48,7 +46,7 @@ Update the OAuth authorized origin and Maps key restrictions for the deployed UR
 npm run build
 npm run lint
 node --check server/index.mjs
-node --test tests/isolation.test.mjs
+node --test tests/isolation.test.mjs tests/solo-owner.test.mjs
 ```
 
 `src/data/googleSheetData.ts` contains only empty collections and new-business defaults. Optional integration values are blank in `.env.example`. Credentials, historical customer records, and the source business's Git history are excluded.

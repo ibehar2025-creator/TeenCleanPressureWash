@@ -10,7 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
-  FileSignature,
   ExternalLink,
   LayoutDashboard,
   MapPinned,
@@ -22,9 +21,7 @@ import {
   Sparkles,
   Star,
   Trash2,
-  UserRoundCog,
   X,
-  WalletCards,
 } from "lucide-react";
 import { useAuth } from "./lib/authContext";
 import { isStarterPreview } from "./lib/starterPreview";
@@ -32,9 +29,6 @@ import { loadThemePreference, saveThemePreference, themeIsDark } from "./lib/the
 import { JobsSpreadsheet } from "./components/JobsSpreadsheet";
 import { ProfileMenu } from "./components/ProfileMenu";
 import { NotificationCenter } from "./components/NotificationCenter";
-import { EmployeeWorkspace } from "./components/EmployeeWorkspace";
-import { OwnerContractsView, OwnerTeamView } from "./components/OwnerOperations";
-import { PayrollCenter } from "./components/PayrollCenter";
 import { CreateRecordModal, CustomerEditorModal, CustomerProfile, GlobalSearch } from "./components/OperationsUi";
 import type { CreateKind } from "./components/OperationsUi";
 import {
@@ -58,13 +52,12 @@ import {
   jobsForCustomer,
   recurringPlanType,
 } from "./lib/calculations";
-import { createCalendarEvent, createCustomer, createJob, createLead, createServicePlan, createSolicitation, deleteCalendarEvent, deleteJob, deleteLead, deleteSolicitation, loadDatabaseSnapshot, loadOwnerOperations, saveCalendarEventPatch, saveCustomerPatch, saveJobPatch, saveLeadPatch, saveServicePlanPatch, saveSolicitationPatch, syncSheetsToDatabase } from "./lib/api";
-import type { OwnerOperationsSnapshot } from "./lib/api";
+import { createCalendarEvent, createCustomer, createJob, createLead, createServicePlan, createSolicitation, deleteCalendarEvent, deleteJob, deleteLead, deleteSolicitation, loadDatabaseSnapshot, saveCalendarEventPatch, saveCustomerPatch, saveJobPatch, saveLeadPatch, saveServicePlanPatch, saveSolicitationPatch, syncSheetsToDatabase } from "./lib/api";
 import { followUpLabel, followUpTiming } from "./lib/followUps";
 import type { CalendarEvent, CalendarEventType, Customer, Expense, Invoice, Job, JobCreateInput, Lead, LeadStatus, PaymentStatus, ServicePlan, ServicePlanCreateInput, Solicitation } from "./types/business";
 
 type ReviewRow = { id: string; submittedAt: string; name: string; rating: number; review: string; source: string };
-type TabId = "dashboard" | "customers" | "leads" | "jobs" | "calendar" | "map" | "analytics" | "plans" | "team" | "payroll" | "contracts";
+type TabId = "dashboard" | "customers" | "leads" | "jobs" | "calendar" | "map" | "analytics" | "plans";
 type SyncPayload = Partial<{ customers: Customer[]; jobs: Job[]; leads: Lead[]; invoices: Invoice[]; servicePlans: ServicePlan[]; reviews: ReviewRow[]; expenses: Expense[]; solicitations: Solicitation[]; calendarEvents: CalendarEvent[] }>;
 type CalendarDay = { label: string; date: string };
 
@@ -76,9 +69,6 @@ const tabs: { id: TabId; label: string; icon: ElementType; mobileOnly?: boolean 
   { id: "map", label: "Map", icon: MapPinned },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "plans", label: "Service Plans", icon: ClipboardList },
-  { id: "team", label: "Team", icon: UserRoundCog },
-  { id: "payroll", label: "Contractor Pay", icon: WalletCards },
-  { id: "contracts", label: "Contracts", icon: FileSignature },
 ];
 
 const planTypes = ["monthly", "3-month", "4-month", "6-month", "yearly"];
@@ -253,15 +243,10 @@ function DataTable({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
-  const { user } = useAuth();
-  const [employeePreview, setEmployeePreview] = useState(false);
-  if (user.role === "employee" || employeePreview) {
-    return <EmployeeWorkspace preview={employeePreview} onExitPreview={() => setEmployeePreview(false)} />;
-  }
-  return <OwnerDashboard onPreviewEmployee={() => setEmployeePreview(true)} />;
+  return <OwnerDashboard />;
 }
 
-function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }) {
+function OwnerDashboard() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -274,7 +259,6 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
   const [reviews, setReviews] = useState<ReviewRow[]>(importedReviews);
   const [solicitations, setSolicitations] = useState<Solicitation[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
-  const [ownerOperations, setOwnerOperations] = useState<OwnerOperationsSnapshot>({ employees: [], assignments: [], earnings: [], contracts: [], payouts: [] });
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -293,10 +277,6 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
   const activeLabel = useMemo(() => tabs.find((tab) => tab.id === activeTab)?.label ?? "Dashboard", [activeTab]);
   const syncEndpoint = import.meta.env.VITE_SHEETS_SYNC_URL as string | undefined;
 
-  const refreshOwnerOperations = useCallback(async () => {
-    const result = await loadOwnerOperations();
-    if (result) setOwnerOperations(result);
-  }, []);
 
   const syncSheets = useCallback(async () => {
     const minimumManualSkeleton = new Promise<void>((resolve) => window.setTimeout(resolve, calendarSkeletonDurationMs));
@@ -354,9 +334,6 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
     return () => window.clearInterval(interval);
   }, [syncSheets]);
 
-  useEffect(() => {
-    void refreshOwnerOperations();
-  }, [refreshOwnerOperations]);
 
   useEffect(() => {
     let ignore = false;
@@ -585,7 +562,7 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
         <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:block">
           <div className="mb-6 rounded-lg bg-ink p-4 text-white"><h1 className="brand-name text-xl font-bold">TeenCleanPressureWash</h1><p className="mt-2 text-xs text-slate-300">Daily control center for jobs, scheduling, and growth.</p></div>
           <nav className="space-y-1">{tabs.filter((tab) => !tab.mobileOnly).map((tab) => { const Icon = tab.icon; return <button key={tab.id} data-testid={`desktop-tab-${tab.id}`} onClick={() => chooseTab(tab.id)} className={cx("nav-item", activeTab === tab.id && "active")}><Icon size={18} /><span>{tab.label}</span></button>; })}</nav>
-          <button type="button" className="nav-item mt-5 border-t border-slate-200 pt-5 dark:border-slate-700" onClick={onPreviewEmployee}><UserRoundCog size={18} /><span>Preview employee</span></button>
+          
         </aside>
         <main className="flex min-w-0 max-w-full flex-1 flex-col overflow-x-hidden">
           <header className="app-header min-w-0 max-w-full border-b border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
@@ -594,7 +571,7 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
                 <button className="icon-button mt-1 lg:hidden" onClick={() => setMobileMenuOpen(true)} title="Open navigation" aria-label="Open navigation"><Menu size={18} /></button>
                 <div><p className="text-xs font-semibold uppercase tracking-wide text-lagoon dark:text-cyan-300">{fullDateFormatter.format(dateFromIso(currentDate))}</p><h1 className="text-2xl font-bold text-ink dark:text-white">{activeLabel}</h1><p className="mt-1 max-w-2xl text-xs text-slate-500 dark:text-slate-400">{syncStatus}</p></div>
               </div>
-              <div className="flex items-center gap-2"><span className="hidden rounded-lg bg-mist px-3 py-2 text-sm font-semibold text-lagoon dark:bg-cyan-500/15 dark:text-cyan-200 sm:inline-flex">{currency.format(metrics.dailyRevenue)} job value today</span><button type="button" className="text-button hidden xl:inline-flex" onClick={onPreviewEmployee}>Preview employee</button><NotificationCenter customers={customers} leads={leads} jobs={jobs} plans={plans} contracts={ownerOperations.contracts} earnings={ownerOperations.earnings} currentDate={currentDate} syncStatus={syncStatus} syncing={syncing} onLead={setSelectedLead} onJob={setSelectedJob} onPlans={() => chooseTab("plans")} onContracts={() => chooseTab("contracts")} onTeam={() => chooseTab("team")} onSync={() => void syncSheets()} /><button className="text-button" disabled={syncing} onClick={() => void syncSheets()}>{syncing ? "Syncing" : "Refresh"}</button><ProfileMenu theme={themePreference} onTheme={setThemePreference} onOwnerNavigate={chooseTab} /></div>
+              <div className="flex items-center gap-2"><span className="hidden rounded-lg bg-mist px-3 py-2 text-sm font-semibold text-lagoon dark:bg-cyan-500/15 dark:text-cyan-200 sm:inline-flex">{currency.format(metrics.dailyRevenue)} job value today</span><NotificationCenter customers={customers} leads={leads} jobs={jobs} plans={plans} currentDate={currentDate} syncStatus={syncStatus} syncing={syncing} onLead={setSelectedLead} onJob={setSelectedJob} onPlans={() => chooseTab("plans")} onSync={() => void syncSheets()} /><button className="text-button" disabled={syncing} onClick={() => void syncSheets()}>{syncing ? "Syncing" : "Refresh"}</button><ProfileMenu theme={themePreference} onTheme={setThemePreference} /></div>
             </div>
           </header>
           {activeTab === "jobs" && <GlobalSearch customers={customers} jobs={jobs} onJob={setSelectedJob} onNew={setCreateKind} />}
@@ -606,7 +583,7 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
                   <div><h2 className="brand-name text-lg font-bold">TeenCleanPressureWash</h2><p className="mt-1 text-xs text-slate-300">Choose a dashboard tab.</p></div>
                   <button className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/20 text-white transition hover:bg-white/10" onClick={() => setMobileMenuOpen(false)} title="Close navigation" aria-label="Close navigation"><X size={18} /></button>
                 </div>
-                <nav className="space-y-1 overflow-y-auto">{tabs.map((tab) => { const Icon = tab.icon; return <button key={tab.id} data-testid={`mobile-tab-${tab.id}`} onClick={() => chooseTab(tab.id)} className={cx("nav-item", activeTab === tab.id && "active")}><Icon size={18} /><span>{tab.label}</span></button>; })}<button type="button" className="nav-item mt-3 border-t border-slate-200 pt-4 dark:border-slate-700" onClick={onPreviewEmployee}><UserRoundCog size={18} /><span>Preview employee</span></button></nav>
+                <nav className="space-y-1 overflow-y-auto">{tabs.map((tab) => { const Icon = tab.icon; return <button key={tab.id} data-testid={`mobile-tab-${tab.id}`} onClick={() => chooseTab(tab.id)} className={cx("nav-item", activeTab === tab.id && "active")}><Icon size={18} /><span>{tab.label}</span></button>; })}</nav>
               </aside>
             </div>
           )}
@@ -619,9 +596,6 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
             {activeTab === "map" && <Suspense fallback={<TabLoader label="map" />}><BusinessMap customers={customers} jobs={jobs} solicitations={solicitations} jobFocusRequest={mapJobFocus} onSaveJobCoordinates={saveMapJobCoordinates} onCreateSolicitation={addSolicitation} onUpdateSolicitation={updateSolicitation} onDeleteSolicitation={removeSolicitation} /></Suspense>}
             {activeTab === "analytics" && <Suspense fallback={<TabLoader label="analytics" />}><Analytics customers={customers} jobs={jobs} leads={leads} invoices={invoices} plans={plans} expenses={savedExpenses} currentDate={currentDate} /></Suspense>}
             {activeTab === "plans" && <Plans customers={customers} plans={plans} onPlanCreate={addPlan} onPlanUpdate={updatePlan} />}
-            {activeTab === "team" && <OwnerTeamView operations={ownerOperations} jobs={jobs} customerNames={new Map(customers.map((customer) => [customer.id, customer.name]))} onRefresh={refreshOwnerOperations} />}
-            {activeTab === "payroll" && <PayrollCenter employees={ownerOperations.employees} />}
-            {activeTab === "contracts" && <OwnerContractsView operations={ownerOperations} onRefresh={async () => { await refreshOwnerOperations(); const snapshot = await loadDatabaseSnapshot(); if (snapshot?.servicePlans) setPlans(normalizePlans(snapshot.servicePlans)); }} />}
           </div>
         </main>
       </div>
@@ -763,7 +737,7 @@ function Calendar({ customers, jobs, events, currentDate, loading, onJobClick, o
   const newEvent = (): CalendarEvent => ({ id: "", title: "", type: "meeting", date: anchorIso, startTime: "09:00", endTime: "10:00", location: "", notes: "" });
   const actions = <div className="flex flex-wrap items-center justify-end gap-2"><button type="button" className="primary-button gap-2" onClick={() => setSelectedEvent(newEvent())}><Plus size={16} />Add event</button><button className="icon-button" onClick={() => moveCalendar(-1)} title={`Previous ${mode}`} aria-label={`Previous ${mode}`}><ChevronLeft size={18} /></button><button className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-lagoon hover:text-lagoon dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200" onClick={() => setAnchorIso(currentDate)}>Today</button><button className="icon-button" onClick={() => moveCalendar(1)} title={`Next ${mode}`} aria-label={`Next ${mode}`}><ChevronRight size={18} /></button><div className="segmented">{(["day", "week", "month"] as const).map((item) => <button key={item} onClick={() => setMode(item)} className={cx(mode === item && "active")}>{item}</button>)}</div></div>;
 
-  return <><Section title="Scheduling calendar" kicker="Jobs and business events" action={actions}><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-lg font-semibold text-ink dark:text-white">{calendarLabel(anchorDate, mode)}</p><p className="text-sm text-slate-500 dark:text-slate-400">{visibleJobCount} jobs · {visibleEventCount} events</p></div><div className={cx("calendar-grid", mode === "month" && "month-mode")}>{days.map((day) => { const dayJobs = jobs.filter((job) => job.date === day.date); const dayEvents = events.filter((event) => event.date === day.date).sort((a, b) => a.startTime.localeCompare(b.startTime)); return <div key={day.date} className="calendar-day"><div className="mb-3 flex items-center justify-between"><p className="font-semibold text-ink dark:text-white">{day.label}</p><span className="text-xs text-slate-500 dark:text-slate-400">{day.date.slice(5)}</span></div>{dayJobs.length === 0 && dayEvents.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500 dark:border-slate-700">Nothing scheduled</p>}{dayJobs.map((job) => <button key={job.id} onClick={() => onJobClick(job)} className="calendar-job"><span className="text-xs font-semibold">{job.time}</span><span className="font-semibold">{findCustomer(customers, job.customerId).name}</span><span className="text-xs">{job.address}</span><span className="text-xs">Unassigned</span><Badge status={jobDisplayStatus(job, currentDate)} /></button>)}{dayEvents.map((event) => <button key={event.id} type="button" onClick={() => setSelectedEvent(event)} className="calendar-event"><span className="text-xs font-semibold">{event.startTime}{event.endTime ? ` - ${event.endTime}` : ""}</span><span className="font-semibold text-ink dark:text-white">{event.title}</span><span className="text-xs capitalize text-lagoon dark:text-cyan-300">{event.type}</span>{event.location && <span className="truncate text-xs">{event.location}</span>}</button>)}</div>; })}</div></Section>{selectedEvent && <CalendarEventModal key={selectedEvent.id || "new-event"} event={selectedEvent} onCreate={onCreateEvent} onUpdate={onUpdateEvent} onDelete={onDeleteEvent} onClose={() => setSelectedEvent(null)} />}</>;
+  return <><Section title="Scheduling calendar" kicker="Jobs and business events" action={actions}><div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-lg font-semibold text-ink dark:text-white">{calendarLabel(anchorDate, mode)}</p><p className="text-sm text-slate-500 dark:text-slate-400">{visibleJobCount} jobs · {visibleEventCount} events</p></div><div className={cx("calendar-grid", mode === "month" && "month-mode")}>{days.map((day) => { const dayJobs = jobs.filter((job) => job.date === day.date); const dayEvents = events.filter((event) => event.date === day.date).sort((a, b) => a.startTime.localeCompare(b.startTime)); return <div key={day.date} className="calendar-day"><div className="mb-3 flex items-center justify-between"><p className="font-semibold text-ink dark:text-white">{day.label}</p><span className="text-xs text-slate-500 dark:text-slate-400">{day.date.slice(5)}</span></div>{dayJobs.length === 0 && dayEvents.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-3 text-sm text-slate-500 dark:border-slate-700">Nothing scheduled</p>}{dayJobs.map((job) => <button key={job.id} onClick={() => onJobClick(job)} className="calendar-job"><span className="text-xs font-semibold">{job.time}</span><span className="font-semibold">{findCustomer(customers, job.customerId).name}</span><span className="text-xs">{job.address}</span><Badge status={jobDisplayStatus(job, currentDate)} /></button>)}{dayEvents.map((event) => <button key={event.id} type="button" onClick={() => setSelectedEvent(event)} className="calendar-event"><span className="text-xs font-semibold">{event.startTime}{event.endTime ? ` - ${event.endTime}` : ""}</span><span className="font-semibold text-ink dark:text-white">{event.title}</span><span className="text-xs capitalize text-lagoon dark:text-cyan-300">{event.type}</span>{event.location && <span className="truncate text-xs">{event.location}</span>}</button>)}</div>; })}</div></Section>{selectedEvent && <CalendarEventModal key={selectedEvent.id || "new-event"} event={selectedEvent} onCreate={onCreateEvent} onUpdate={onUpdateEvent} onDelete={onDeleteEvent} onClose={() => setSelectedEvent(null)} />}</>;
 }
 
 function CalendarEventModal({ event, onCreate, onUpdate, onDelete, onClose }: { event: CalendarEvent; onCreate: (event: Omit<CalendarEvent, "id">) => Promise<CalendarEvent>; onUpdate: (eventId: string, patch: Partial<CalendarEvent>) => Promise<CalendarEvent>; onDelete: (eventId: string) => Promise<void>; onClose: () => void }) {
@@ -929,7 +903,7 @@ function JobModal({ customers, job, onSave, onSaveCustomer, onDelete, onFindOnMa
     event.preventDefault();
     setSaving(true);
     setError("");
-    const editableFields: Array<keyof Job> = ["date", "time", "customerId", "address", "serviceType", "status", "price", "notes", "employeeInstructions"];
+    const editableFields: Array<keyof Job> = ["date", "time", "customerId", "address", "serviceType", "status", "price", "notes"];
     const original = importedMetadata ? { ...job, notes: "" } : job;
     const parsedPrice = Number(priceInput);
     const submittedDraft = { ...draft, price: priceInput.trim() && Number.isFinite(parsedPrice) ? parsedPrice : 0 };
@@ -949,7 +923,7 @@ function JobModal({ customers, job, onSave, onSaveCustomer, onDelete, onFindOnMa
     }
   }
 
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/50 p-3 sm:p-4"><form onSubmit={submit} className="max-h-[94vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-5 shadow-soft dark:bg-slate-900"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-lagoon dark:text-cyan-300">Edit job</p><h3 className="text-xl font-bold text-ink dark:text-white">{findCustomer(customers, draft.customerId).name}</h3><p className="mt-1 text-xs text-slate-500">Changes save to your business records.</p></div><button type="button" className="icon-button shrink-0" onClick={onClose} title="Close" aria-label="Close job editor"><X size={17} /></button></div><div className="settings-grid mt-5"><Field label="Customer"><select value={draft.customerId} onChange={(event) => { const customerId = event.target.value; setDraft({ ...draft, customerId }); setPhoneInput(findCustomer(customers, customerId).phone ?? ""); }}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></Field><Field label="Status"><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Job["status"] })}>{jobStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field><Field label="Date"><input type="date" required value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></Field><Field label="Time"><input value={draft.time} required placeholder="09:00" onChange={(event) => setDraft({ ...draft, time: event.target.value })} /></Field><Field label="Price"><input type="number" min="0" step="0.01" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} /></Field><Field label="Service"><input value={draft.serviceType} required onChange={(event) => setDraft({ ...draft, serviceType: event.target.value })} /></Field><Field label="Phone number"><input type="tel" autoComplete="tel" value={phoneInput} placeholder="Customer phone number" onChange={(event) => setPhoneInput(event.target.value)} /></Field><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Address<input value={draft.address} required onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Instructions for employee<textarea value={draft.employeeInstructions ?? ""} onChange={(event) => setDraft({ ...draft, employeeInstructions: event.target.value })} placeholder="Gate code, water access, pets, surfaces to avoid, customer requests, or equipment needed" /></label><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Internal job notes<textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label></div>{job.websiteEditedFields?.length ? <p className="mt-4 rounded-lg bg-mist px-3 py-2 text-xs font-medium text-lagoon dark:bg-cyan-500/15 dark:text-cyan-200">Website edits saved for: {job.websiteEditedFields.join(", ")}</p> : null}{confirmingDelete && <div className="mt-4 flex flex-col gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>This permanently removes the job from your business records.</span><div className="flex gap-2"><button type="button" className="text-button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Keep job</button><button type="button" className="primary-button bg-rose-600 gap-2 hover:bg-rose-700" onClick={() => void remove()} disabled={deleting}><Trash2 size={15} />{deleting ? "Removing..." : "Yes, remove"}</button></div></div>}{error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">{error}</p>}<div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-col gap-2 sm:flex-row">{upcomingJobsSheetUrl && job.source === "spreadsheet-import" && <a className="text-button gap-2" href={sourceSpreadsheetRowUrl(job)} target="_blank" rel="noreferrer"><ExternalLink size={15} />View original spreadsheet row</a>}<button type="button" className="text-button gap-2" onClick={() => onFindOnMap(job)} disabled={!job.address.trim()}><MapPinned size={15} />Find on map</button><button type="button" className="text-button gap-2 text-rose-600 hover:border-rose-300 hover:text-rose-700 dark:text-rose-300" onClick={() => setConfirmingDelete(true)} disabled={saving || deleting}><Trash2 size={15} />Remove job</button></div><div className="flex flex-col-reverse gap-2 sm:flex-row"><button type="button" className="text-button" onClick={onClose} disabled={saving || deleting}>Cancel</button><button type="submit" className="primary-button gap-2" disabled={saving || deleting}><Save size={16} />{saving ? "Saving..." : "Save changes"}</button></div></div></form></div>;
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/50 p-3 sm:p-4"><form onSubmit={submit} className="max-h-[94vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-5 shadow-soft dark:bg-slate-900"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-lagoon dark:text-cyan-300">Edit job</p><h3 className="text-xl font-bold text-ink dark:text-white">{findCustomer(customers, draft.customerId).name}</h3><p className="mt-1 text-xs text-slate-500">Changes save to your business records.</p></div><button type="button" className="icon-button shrink-0" onClick={onClose} title="Close" aria-label="Close job editor"><X size={17} /></button></div><div className="settings-grid mt-5"><Field label="Customer"><select value={draft.customerId} onChange={(event) => { const customerId = event.target.value; setDraft({ ...draft, customerId }); setPhoneInput(findCustomer(customers, customerId).phone ?? ""); }}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></Field><Field label="Status"><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Job["status"] })}>{jobStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field><Field label="Date"><input type="date" required value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></Field><Field label="Time"><input value={draft.time} required placeholder="09:00" onChange={(event) => setDraft({ ...draft, time: event.target.value })} /></Field><Field label="Price"><input type="number" min="0" step="0.01" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} /></Field><Field label="Service"><input value={draft.serviceType} required onChange={(event) => setDraft({ ...draft, serviceType: event.target.value })} /></Field><Field label="Phone number"><input type="tel" autoComplete="tel" value={phoneInput} placeholder="Customer phone number" onChange={(event) => setPhoneInput(event.target.value)} /></Field><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Address<input value={draft.address} required onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Internal job notes<textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label></div>{job.websiteEditedFields?.length ? <p className="mt-4 rounded-lg bg-mist px-3 py-2 text-xs font-medium text-lagoon dark:bg-cyan-500/15 dark:text-cyan-200">Website edits saved for: {job.websiteEditedFields.join(", ")}</p> : null}{confirmingDelete && <div className="mt-4 flex flex-col gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>This permanently removes the job from your business records.</span><div className="flex gap-2"><button type="button" className="text-button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Keep job</button><button type="button" className="primary-button bg-rose-600 gap-2 hover:bg-rose-700" onClick={() => void remove()} disabled={deleting}><Trash2 size={15} />{deleting ? "Removing..." : "Yes, remove"}</button></div></div>}{error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">{error}</p>}<div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-col gap-2 sm:flex-row">{upcomingJobsSheetUrl && job.source === "spreadsheet-import" && <a className="text-button gap-2" href={sourceSpreadsheetRowUrl(job)} target="_blank" rel="noreferrer"><ExternalLink size={15} />View original spreadsheet row</a>}<button type="button" className="text-button gap-2" onClick={() => onFindOnMap(job)} disabled={!job.address.trim()}><MapPinned size={15} />Find on map</button><button type="button" className="text-button gap-2 text-rose-600 hover:border-rose-300 hover:text-rose-700 dark:text-rose-300" onClick={() => setConfirmingDelete(true)} disabled={saving || deleting}><Trash2 size={15} />Remove job</button></div><div className="flex flex-col-reverse gap-2 sm:flex-row"><button type="button" className="text-button" onClick={onClose} disabled={saving || deleting}>Cancel</button><button type="submit" className="primary-button gap-2" disabled={saving || deleting}><Save size={16} />{saving ? "Saving..." : "Save changes"}</button></div></div></form></div>;
 }
 
 function LeadModal({ lead, onSave, onDelete, onClose }: { lead: Lead; onSave: (leadId: string, patch: Partial<Lead>) => Promise<Lead>; onDelete: (leadId: string) => Promise<void>; onClose: () => void }) {

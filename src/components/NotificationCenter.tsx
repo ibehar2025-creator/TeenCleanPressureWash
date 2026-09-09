@@ -6,21 +6,18 @@ import {
   Check,
   CircleDollarSign,
   ClipboardList,
-  FileSignature,
   MapPinOff,
-  MessageSquareWarning,
   RefreshCw,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { loadManagerIssues, loadReadNotificationKeys, markNotificationsRead } from "../lib/api";
-import type { ManagerIssue } from "../lib/api";
+import { loadReadNotificationKeys, markNotificationsRead } from "../lib/api";
 import { useAuth } from "../lib/authContext";
 import { followUpTiming } from "../lib/followUps";
-import type { ContractSubmission, Customer, EarningSubmission, Job, Lead, ServicePlan } from "../types/business";
+import type { Customer, Job, Lead, ServicePlan } from "../types/business";
 
 type NotificationTone = "urgent" | "today" | "upcoming";
-type NotificationKind = "lead" | "job" | "plan" | "contract" | "upsell" | "sync" | "issue";
+type NotificationKind = "lead" | "job" | "plan" | "sync";
 
 type NotificationItem = {
   id: string;
@@ -28,7 +25,7 @@ type NotificationItem = {
   title: string;
   detail: string;
   kind: NotificationKind;
-  record?: Lead | Job | ServicePlan | ContractSubmission | EarningSubmission;
+  record?: Lead | Job | ServicePlan;
 };
 
 function notificationKey(item: NotificationItem) {
@@ -56,11 +53,8 @@ function missingAddress(address: string) {
 
 function notificationIcon(item: NotificationItem) {
   if (item.kind === "sync") return RefreshCw;
-  if (item.kind === "issue") return MessageSquareWarning;
   if (item.kind === "lead") return CalendarClock;
   if (item.kind === "plan") return ClipboardList;
-  if (item.kind === "contract") return FileSignature;
-  if (item.kind === "upsell") return CircleDollarSign;
   if (item.id.startsWith("missing-address")) return MapPinOff;
   if (item.id.startsWith("missing-price")) return CircleDollarSign;
   if (item.id.startsWith("conflict")) return AlertTriangle;
@@ -85,10 +79,6 @@ export function NotificationCenter({
   onJob,
   onPlans,
   onSync,
-  contracts = [],
-  onContracts,
-  earnings = [],
-  onTeam,
 }: {
   customers: Customer[];
   leads: Lead[];
@@ -101,16 +91,11 @@ export function NotificationCenter({
   onJob: (job: Job) => void;
   onPlans: () => void;
   onSync: () => void;
-  contracts?: ContractSubmission[];
-  onContracts?: () => void;
-  earnings?: EarningSubmission[];
-  onTeam?: () => void;
 }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [readNotificationKeys, setReadNotificationKeys] = useState<Set<string>>(new Set());
   const [readStateLoaded, setReadStateLoaded] = useState(false);
-  const [managerIssues, setManagerIssues] = useState<ManagerIssue[]>([]);
   const customerNames = useMemo(() => new Map(customers.map((customer) => [customer.id, customer.name])), [customers]);
 
   useEffect(() => {
@@ -127,17 +112,6 @@ export function NotificationCenter({
     return () => { active = false; };
   }, [user.id]);
 
-  useEffect(() => {
-    let active = true;
-    const refreshIssues = () => loadManagerIssues().then((result) => {
-      if (active) setManagerIssues(result?.issues ?? []);
-    }).catch(() => {
-      // Other business notifications remain available if reports cannot be loaded.
-    });
-    void refreshIssues();
-    const interval = window.setInterval(() => void refreshIssues(), 60_000);
-    return () => { active = false; window.clearInterval(interval); };
-  }, [user.id]);
 
   const notifications = useMemo(() => {
     const items: NotificationItem[] = [];
@@ -240,38 +214,6 @@ export function NotificationCenter({
       });
     });
 
-    contracts.filter((contract) => contract.status === "pending").forEach((contract) => {
-      items.push({
-        id: `contract-${contract.id}`,
-        tone: "urgent",
-        title: `New contract: ${contract.customerName}`,
-        detail: `${contract.employeeName} submitted ${contract.frequency} at ${contract.price.toLocaleString("en-US", { style: "currency", currency: "USD" })}`,
-        kind: "contract",
-        record: contract,
-      });
-    });
-
-    earnings.filter((earning) => earning.upsellDescription && ["accepted", "follow-up"].includes(earning.upsellOutcome)).forEach((earning) => {
-      const accepted = earning.upsellOutcome === "accepted";
-      items.push({
-        id: `upsell-${earning.id}-${earning.upsellOutcome}`,
-        tone: accepted ? "urgent" : "upcoming",
-        title: `${accepted ? "Accepted upsell" : "Upsell follow-up"}: ${earning.customerName}`,
-        detail: `${earning.employeeName} offered ${earning.upsellDescription} for ${earning.upsellQuotedAmount.toLocaleString("en-US", { style: "currency", currency: "USD" })}`,
-        kind: "upsell",
-        record: earning,
-      });
-    });
-
-    managerIssues.forEach((issue) => {
-      items.push({
-        id: `manager-issue-${issue.id}`,
-        tone: "urgent",
-        title: `Problem reported by ${issue.reporterName}`,
-        detail: issue.message,
-        kind: "issue",
-      });
-    });
 
     const normalizedSyncStatus = syncStatus.toLowerCase();
     if (["failed", "error", "unavailable", "could not", "not configured"].some((word) => normalizedSyncStatus.includes(word))) {
@@ -286,7 +228,7 @@ export function NotificationCenter({
 
     const rank = { urgent: 0, today: 1, upcoming: 2 };
     return items.sort((a, b) => rank[a.tone] - rank[b.tone] || a.detail.localeCompare(b.detail));
-  }, [contracts, customerNames, currentDate, earnings, jobs, leads, managerIssues, plans, syncStatus]);
+  }, [customerNames, currentDate, jobs, leads, plans, syncStatus]);
 
   const attentionCount = readStateLoaded
     ? notifications.filter((item) => !readNotificationKeys.has(notificationSeenKey(item))).length
@@ -322,8 +264,6 @@ export function NotificationCenter({
     if (item.kind === "lead" && item.record) onLead(item.record as Lead);
     if (item.kind === "job" && item.record) onJob(item.record as Job);
     if (item.kind === "plan") onPlans();
-    if (item.kind === "contract") onContracts?.();
-    if (item.kind === "upsell") onTeam?.();
     if (item.kind === "sync") onSync();
   }
 

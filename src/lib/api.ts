@@ -1,4 +1,4 @@
-import type { CalendarEvent, ContractSubmission, Customer, EarningSubmission, EmployeeProfile, Expense, Invoice, Job, JobAssignment, JobCreateInput, Lead, PayrollPreview, PayrollRun, PayoutSummary, Review, ServicePlan, ServicePlanCreateInput, Solicitation } from "../types/business";
+import type { CalendarEvent, Customer, Expense, Invoice, Job, JobCreateInput, Lead, Review, ServicePlan, ServicePlanCreateInput, Solicitation } from "../types/business";
 import { emptyStarterRecords, isStarterPreview } from "./starterPreview";
 
 export type DatabaseSnapshot = Partial<{
@@ -19,38 +19,6 @@ export interface SolicitationSaveResult {
   removedLeadId?: string;
 }
 
-export interface EmployeeWorkspaceSnapshot {
-  employee: EmployeeProfile;
-  preview: boolean;
-  customers: Customer[];
-  jobs: Job[];
-  assignments: JobAssignment[];
-  earnings: EarningSubmission[];
-  contracts: ContractSubmission[];
-  solicitations: Solicitation[];
-  payouts: PayoutSummary[];
-}
-
-export interface OwnerOperationsSnapshot {
-  employees: EmployeeProfile[];
-  assignments: JobAssignment[];
-  earnings: EarningSubmission[];
-  contracts: ContractSubmission[];
-  payouts: PayoutSummary[];
-}
-
-export interface OwnerPayrollSnapshot {
-  runs: PayrollRun[];
-  preview: PayrollPreview;
-}
-
-export interface ManagerIssue {
-  id: string;
-  reporterName: string;
-  message: string;
-  pageUrl: string;
-  createdAt: string;
-}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
   if (isStarterPreview()) {
@@ -133,10 +101,10 @@ export function saveServicePlanPatch(planId: string, patch: Partial<ServicePlan>
   });
 }
 
-export function createSolicitation(solicitation: Omit<Solicitation, "id">, employeeId?: string) {
+export function createSolicitation(solicitation: Omit<Solicitation, "id">) {
   return request<SolicitationSaveResult>("/api/solicitations", {
     method: "POST",
-    body: JSON.stringify({ ...solicitation, employeeId }),
+    body: JSON.stringify(solicitation),
   });
 }
 
@@ -179,115 +147,4 @@ export function markNotificationsRead(keys: string[]) {
     method: "POST",
     body: JSON.stringify({ keys }),
   });
-}
-
-export function submitManagerIssue(message: string, pageUrl: string) {
-  return request<ManagerIssue>("/api/issues", { method: "POST", body: JSON.stringify({ message, pageUrl }) });
-}
-
-export function loadManagerIssues() {
-  return request<{ issues: ManagerIssue[] }>("/api/owner/issues");
-}
-
-export function loadEmployeeWorkspace(employeeId?: string) {
-  const query = employeeId ? `?employeeId=${encodeURIComponent(employeeId)}` : "";
-  return request<EmployeeWorkspaceSnapshot>(`/api/employee/bootstrap${query}`);
-}
-
-export function saveEmployeeJobPatch(jobId: string, patch: Pick<Partial<Job>, "status" | "notes">, employeeId?: string) {
-  return request<Job>(`/api/employee/jobs/${jobId}`, { method: "PATCH", body: JSON.stringify({ ...patch, employeeId }) });
-}
-
-export function submitEmployeeEarnings(input: {
-  jobId: string;
-  tipAmount: number;
-  contractSubmissionId?: string;
-  employeeId?: string;
-  hasUpsell?: boolean;
-  upsellDescription?: string;
-  upsellOutcome?: "accepted" | "declined" | "follow-up";
-  upsellQuotedAmount?: number;
-  upsellNotes?: string;
-}) {
-  return request<EarningSubmission>("/api/employee/earnings", { method: "POST", body: JSON.stringify(input) });
-}
-
-export function submitEmployeeUpsell(input: { jobId: string; description: string; outcome: "accepted" | "declined" | "follow-up"; quotedAmount: number; notes: string; employeeId?: string }) {
-  return request<EarningSubmission>("/api/employee/upsells", { method: "POST", body: JSON.stringify(input) });
-}
-
-export function submitEmployeeContract(input: {
-  jobId: string;
-  relatedJob: string;
-  customerName: string;
-  customerPhone: string;
-  customerEmail: string;
-  serviceAddress: string;
-  serviceDescription: string;
-  frequency: string;
-  price: number;
-  notes: string;
-  agreementText: string;
-  signerName: string;
-  signatureData: string;
-  electronicConsent: boolean;
-  employeeId?: string;
-}) {
-  return request<ContractSubmission>("/api/employee/contracts", { method: "POST", body: JSON.stringify(input) });
-}
-
-export function loadOwnerOperations() {
-  return request<OwnerOperationsSnapshot>("/api/owner/operations");
-}
-
-export function saveEmployeeProfile(employeeId: string, patch: Partial<Pick<EmployeeProfile, "active" | "baseCommissionPct" | "upsellCommissionPct" | "contractBonusPct" | "tipSharePct">>) {
-  return request<EmployeeProfile>(`/api/owner/employees/${employeeId}`, { method: "PATCH", body: JSON.stringify(patch) });
-}
-
-export function assignEmployeeToJob(jobId: string, employeeId: string) {
-  return request<JobAssignment>("/api/owner/assignments", { method: "POST", body: JSON.stringify({ jobId, employeeId }) });
-}
-
-export function removeJobAssignment(jobId: string) {
-  return request<{ deleted: boolean }>(`/api/owner/assignments/${jobId}`, { method: "DELETE" });
-}
-
-export function reviewEarning(earningId: string, decision: "approved" | "rejected", ownerNote = "") {
-  return request<EarningSubmission>(`/api/owner/earnings/${earningId}/review`, { method: "POST", body: JSON.stringify({ decision, ownerNote }) });
-}
-
-export function reviewContract(contractId: string, decision: "approved" | "rejected", ownerNote = "") {
-  return request<ContractSubmission>(`/api/owner/contracts/${contractId}/review`, { method: "POST", body: JSON.stringify({ decision, ownerNote }) });
-}
-
-export function createPayout(earningIds: string[]) {
-  return request<PayoutSummary>("/api/owner/payouts", { method: "POST", body: JSON.stringify({ earningIds }) });
-}
-
-export function loadOwnerPayroll(periodStart?: string) {
-  return request<OwnerPayrollSnapshot>(`/api/owner/payroll${periodStart ? `?periodStart=${encodeURIComponent(periodStart)}` : ""}`);
-}
-
-export function createPayrollRun(input: { periodStart: string; periodEnd: string; payday: string }) {
-  return request<PayrollRun>("/api/owner/payroll", { method: "POST", body: JSON.stringify(input) });
-}
-
-export function addPayrollAdjustment(runId: string, input: { employeeId: string; adjustmentType: "addition" | "deduction"; category: "bonus" | "reimbursement" | "deduction" | "correction" | "other"; description: string; amount: number }) {
-  return request<PayrollRun>(`/api/owner/payroll/${runId}/adjustments`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function deletePayrollAdjustment(runId: string, adjustmentId: string) {
-  return request<PayrollRun>(`/api/owner/payroll/${runId}/adjustments/${adjustmentId}`, { method: "DELETE" });
-}
-
-export function finalizePayrollRun(runId: string) {
-  return request<PayrollRun>(`/api/owner/payroll/${runId}/finalize`, { method: "POST" });
-}
-
-export function recordPayrollPayment(runId: string, input: { employeeId: string; paymentMethod: "bank" | "check"; reference: string; note: string; paidAt: string }) {
-  return request<PayrollRun>(`/api/owner/payroll/${runId}/payments`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function loadEmployeePayroll(employeeId?: string) {
-  return request<{ statements: PayrollRun[] }>(`/api/employee/payroll${employeeId ? `?employeeId=${encodeURIComponent(employeeId)}` : ""}`);
 }

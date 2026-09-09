@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, LoaderCircle, LockKeyhole, ShieldCheck, UserRound, Users } from "lucide-react";
+import { LoaderCircle, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
 import { AuthContext } from "../lib/authContext";
 import { setStarterPreview, starterUser } from "../lib/starterPreview";
-import type { AccountRole, AuthUser } from "../lib/authContext";
+import type { AuthUser } from "../lib/authContext";
 
 type GoogleProfile = Pick<AuthUser, "email" | "name" | "pictureUrl">;
 type AuthConfig = { enabled: boolean; clientId: string; state: string; signupCodeRequired: boolean };
@@ -89,7 +89,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [error, setError] = useState("");
   const [credential, setCredential] = useState("");
   const [profile, setProfile] = useState<GoogleProfile | null>(null);
-  const [role, setRole] = useState<AccountRole>("employee");
+  const role = "owner";
   const [age, setAge] = useState("");
   const [accessCode, setAccessCode] = useState("");
 
@@ -191,10 +191,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
             {profile.pictureUrl ? <img className="h-11 w-11 rounded-full" src={profile.pictureUrl} alt="" referrerPolicy="no-referrer" /> : <span className="grid h-11 w-11 place-items-center rounded-full bg-mist text-lagoon"><UserRound size={20} /></span>}
             <div className="min-w-0"><p className="truncate font-semibold text-ink">{profile.name}</p><p className="truncate text-sm text-slate-500">{profile.email}</p></div>
           </div>
-          <fieldset className="mt-5"><legend className="text-sm font-semibold text-slate-700">Account type</legend><div className="mt-2 grid grid-cols-2 gap-2">{(["employee", "owner"] as AccountRole[]).map((item) => <button key={item} type="button" onClick={() => setRole(item)} className={`flex min-h-20 items-center gap-3 rounded-lg border p-3 text-left transition ${role === item ? "border-lagoon bg-mist text-lagoon" : "border-slate-200 hover:border-slate-300"}`}>{item === "owner" ? <BriefcaseBusiness size={20} /> : <Users size={20} />}<span className="capitalize font-semibold">{item}</span></button>)}</div></fieldset>
           <label className="mt-5 block text-sm font-semibold text-slate-700">Age<input className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-ink outline-none focus:border-lagoon" required min="13" max="120" inputMode="numeric" type="number" value={age} onChange={(event) => setAge(event.target.value)} /></label>
           {config.signupCodeRequired && <label className="mt-4 block text-sm font-semibold text-slate-700">Signup access code<input className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-ink outline-none focus:border-lagoon" required type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} /></label>}
-          <p className="mt-3 text-xs leading-5 text-slate-500">Your access code must match the selected account type. Employee accounts open the protected field workspace.</p>
           {error && <p className="mt-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
           <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between"><button className="text-button" type="button" onClick={() => { setCredential(""); setProfile(null); setError(""); }}>Use another Google account</button><button className="primary-button" disabled={working} type="submit">{working ? "Creating account..." : "Create account"}</button></div>
         </form>
@@ -206,7 +204,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     <AuthShell>
       <div className="w-full text-center">
         <div className="mx-auto max-w-sm">
-          <div className="inline-flex items-center gap-2 rounded-md bg-mist px-2.5 py-1.5 text-xs font-semibold text-lagoon"><LockKeyhole size={14} />Team access</div>
+          <div className="inline-flex items-center gap-2 rounded-md bg-mist px-2.5 py-1.5 text-xs font-semibold text-lagoon"><LockKeyhole size={14} />Business access</div>
           <h2 className="mt-5 text-3xl font-bold text-ink sm:text-4xl">Welcome back</h2>
           <p className="mt-3 text-sm leading-6 text-slate-500">Sign in with an approved Google account to open the business dashboard.</p>
           <div className="my-7 h-px bg-slate-200" />

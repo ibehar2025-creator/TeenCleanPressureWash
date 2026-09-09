@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 
-export type AccountRole = "owner" | "employee";
+export type AccountRole = "owner";
 
 export interface AuthUser {
   id: string;
