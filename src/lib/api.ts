@@ -22,8 +22,9 @@ export interface SolicitationSaveResult {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
   if (isStarterPreview()) {
-    if (path === "/api/bootstrap" || path === "/api/sync-sheets") return emptyStarterRecords() as T;
-    if (options?.method && options.method !== "GET") throw new Error("Connect your own database and account setup before saving records.");
+    if (path === "/api/bootstrap") return emptyStarterRecords() as T;
+    if (path === "/api/sync-sheets") throw new Error("Connect DATABASE_URL and initialize the database before syncing Google Sheets.");
+    if (options?.method && options.method !== "GET") throw new Error("Connect your own database before saving records.");
     return null;
   }
   const response = await fetch(path, {

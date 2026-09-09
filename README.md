@@ -13,12 +13,14 @@ An independent pressure-washing business dashboard with fresh Git history and no
 1. Install Node.js 22 or newer and run `npm ci`.
 2. Create a new Postgres database (a separate Supabase project is supported). Do not point this application at an existing business's database.
 3. Create `.env` from `.env.example` and enter the new database connection string in `DATABASE_URL`. Do not commit `.env`.
-4. Create a Google OAuth web client for this business. Add `http://localhost:4173` and the eventual deployed origin to its authorized JavaScript origins, then set `GOOGLE_CLIENT_ID`.
-5. Set a random `AUTH_OWNER_CODE`. Share this code only with the business owner. Signup supports owner accounts only. No previous accounts or access codes are included.
-6. Initialize the empty database with `node --env-file=.env server/migrate.mjs`.
-7. Run `npm run build`, then `node --env-file=.env server/index.mjs`. Open `http://localhost:4173` and register the first owner using Google and the owner code.
+4. Initialize the empty database with `node --env-file=.env server/migrate.mjs`.
+5. Run `npm run build`, then `node --env-file=.env server/index.mjs`. Open `http://localhost:4173`. No Google login or signup code is required by default.
 
-Before database and sign-in configuration, the application opens directly to an empty starter dashboard without a Google sign-in screen. You can browse the layout; saving records requires completing the setup above. No business API requests are made in starter mode. After configuration, account sign-in protects real records. It does not connect to another business as a fallback.
+Without a database, the application opens an empty starter dashboard. Refresh explicitly reports that database setup is needed. Once the database is configured and initialized, it opens directly to real records without login. It does not connect to another business as a fallback.
+
+**Access warning:** login is off by default at the owner's request. Anyone who reaches the deployed URL can view customer information and create, edit or delete business records, including spreadsheet-backed jobs. Notifications share one workspace inbox; they are not private per person. Keep credentials server-side and consider network-level access restrictions before using real customer data.
+
+To restore Google login later, set `REQUIRE_LOGIN=true`, configure `GOOGLE_CLIENT_ID` with the website origin authorized, and set a private `AUTH_OWNER_CODE`. Redeploy, then register the owner. In no-login mode, a non-person shared database identity supports notification/audit references; it has no personal profile or sign-out/delete-account controls.
 
 ## Optional Google Sheets
 
@@ -46,7 +48,7 @@ Update the OAuth authorized origin and Maps key restrictions for the deployed UR
 npm run build
 npm run lint
 node --check server/index.mjs
-node --test tests/isolation.test.mjs tests/solo-owner.test.mjs tests/sheets-connector.test.mjs
+node --test tests/isolation.test.mjs tests/solo-owner.test.mjs tests/sheets-connector.test.mjs tests/open-workspace.test.mjs
 ```
 
 `src/data/googleSheetData.ts` contains only empty collections and new-business defaults. Optional integration values are blank in `.env.example`. Credentials, historical customer records, and the source business's Git history are excluded.

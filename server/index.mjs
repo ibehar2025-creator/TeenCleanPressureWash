@@ -14,6 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const distPath = path.join(projectRoot, "dist");
 const syncUrl = process.env.SHEETS_SYNC_URL;
+const loginRequired = process.env.REQUIRE_LOGIN === "true";
+const workspaceSubject = "teenclean-shared-workspace";
+let workspaceUser = null;
 
 function sheetEndpoint() {
   const url = new URL(syncUrl);
@@ -684,6 +687,7 @@ async function createSession(res, userId) {
 }
 
 async function sessionUser(req) {
+  if (!loginRequired) return workspaceUser;
   const token = parseCookies(req)[sessionCookieName];
   if (!token || !pool) return null;
   const result = await pool.query(
@@ -707,6 +711,7 @@ function allowEmployeeOrOwner(req, res, next) {
 
 async function requireAuth(req, res, next) {
   try {
+    if (!pool) return res.status(503).json({ error: "DATABASE_URL is not configured." });
     const user = await sessionUser(req);
     if (!user) return res.status(401).json({ error: "Sign in is required." });
     if (user.role !== "owner") return res.status(403).json({ error: "This workspace supports owner accounts only." });
@@ -1047,7 +1052,7 @@ app.get("/api/health", (_req, res) => {
 app.get("/api/auth/config", (_req, res) => {
   const state = randomBytes(24).toString("base64url");
   res.setHeader("Set-Cookie", cookie(authStateCookieName, state, { maxAge: 10 * 60 * 1000 }));
-  res.json({ enabled: Boolean(googleClientId && pool), clientId: googleClientId, state, signupCodeRequired: Boolean(ownerAccessCode) });
+  res.json({ enabled: Boolean(pool), loginRequired, clientId: googleClientId, state, signupCodeRequired: loginRequired && Boolean(ownerAccessCode) });
 });
 
 app.get("/api/auth/session", async (req, res, next) => {
@@ -1065,6 +1070,7 @@ function validAuthState(req) {
 }
 
 app.post("/api/auth/google", requireDatabase, async (req, res, next) => {
+  if (!loginRequired) return res.status(409).json({ error: "This workspace does not use sign-in." });
   try {
     if (!validAuthState(req)) return res.status(403).json({ error: "The sign-in page expired. Refresh and try again." });
     const profile = await verifyGoogleCredential(req.body.credential);
@@ -1088,6 +1094,7 @@ app.post("/api/auth/google", requireDatabase, async (req, res, next) => {
 });
 
 app.post("/api/auth/register", requireDatabase, async (req, res, next) => {
+  if (!loginRequired) return res.status(409).json({ error: "This workspace does not use accounts." });
   try {
     if (!validAuthState(req)) return res.status(403).json({ error: "The signup page expired. Refresh and try again." });
     const age = Number(req.body.age);
@@ -1127,6 +1134,7 @@ app.post("/api/auth/logout", async (req, res, next) => {
 });
 
 app.patch("/api/auth/profile", requireDatabase, requireAuth, async (req, res, next) => {
+  if (!loginRequired) return res.status(409).json({ error: "The shared workspace has no personal profile." });
   try {
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
     const phone = typeof req.body?.phone === "string" ? req.body.phone.trim() : "";
@@ -1147,6 +1155,7 @@ app.patch("/api/auth/profile", requireDatabase, requireAuth, async (req, res, ne
 });
 
 app.delete("/api/auth/account", requireDatabase, requireAuth, async (req, res, next) => {
+  if (!loginRequired) return res.status(409).json({ error: "The shared workspace cannot be deleted as an account." });
   const client = await pool.connect();
   try {
     if (req.body?.confirmation !== "DELETE") {
@@ -1918,9 +1927,24 @@ app.use((error, _req, res, _next) => {
 
 async function startServer() {
   await ensureMapSchema();
+  await initializeWorkspaceUser();
   app.listen(port, "0.0.0.0", () => {
     console.log(`TeenCleanPressureWash dashboard listening on ${port}`);
   });
+}
+
+async function initializeWorkspaceUser() {
+  if (!pool || loginRequired) return;
+  // Internal actor for existing notification and audit foreign keys, not a person or login.
+  await pool.query("alter table user_accounts alter column age drop not null");
+  await pool.query(
+    `insert into user_accounts (google_sub, email, name, age, role)
+     values ($1, 'workspace@teenclean.invalid', 'TeenCleanPressureWash', null, 'owner')
+     on conflict (google_sub) do nothing`, [workspaceSubject],
+  );
+  const result = await pool.query("select * from user_accounts where google_sub = $1", [workspaceSubject]);
+  workspaceUser = result.rows[0];
+  if (!workspaceUser || workspaceUser.role !== "owner" || !workspaceUser.active) throw new Error("Shared workspace could not be initialized.");
 }
 
 startServer().catch((error) => {

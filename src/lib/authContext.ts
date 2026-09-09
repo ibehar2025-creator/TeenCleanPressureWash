@@ -10,6 +10,7 @@ export interface AuthUser {
   phone: string;
   age: number;
   role: AccountRole;
+  sharedWorkspace?: boolean;
 }
 
 export const AuthContext = createContext<{ user: AuthUser; updateProfile: (profile: Pick<AuthUser, "name" | "phone" | "pictureUrl">) => Promise<void>; signOut: () => Promise<void>; deleteAccount: (confirmation: string) => Promise<void> } | null>(null);

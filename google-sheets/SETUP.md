@@ -31,11 +31,11 @@ Only edit the Render service connected to the TeenCleanPressureWash repo.
 
 Save and rebuild/redeploy, since `VITE_JOBS_SHEET_URL` is baked into the frontend. The URL and token for syncing stay server-side. Do not use `VITE_SHEETS_SYNC_URL`.
 
-Real saving also requires the friend's own database and owner authentication setup in the main README: `DATABASE_URL`, `GOOGLE_CLIENT_ID`, `AUTH_OWNER_CODE`, and the database migration. The empty starter dashboard is a preview and cannot save or import real records. No existing business's credentials should be reused.
+Real saving requires the friend's own `DATABASE_URL` and the database migration described in the main README. Google login and a signup code are no longer required by default. The empty starter dashboard cannot save or import real records. No existing business's credentials should be reused. Without login, anyone with the website URL can access and change records.
 
 ## 4. Verify
 
-1. Sign in as the owner and click **Sync sheets**.
+1. Open the website and click **Refresh**.
 2. Check several jobs against the spreadsheet, including a Finished job and a TBD-date job. Totals and placeholder rows should not appear as jobs.
 3. Add a clearly labeled test job on the website. Confirm it appears once in Sheet1, before the total row, and the total formula includes it.
 4. Edit its notes, price and status on the website. Confirm those cells change in Sheets. Change a note in Sheets and click **Sync sheets** to confirm the reverse direction.
@@ -65,6 +65,6 @@ Keep the tab named `Sheet1`. Headers are matched by name, so column order can ch
 - **HTML, Google sign-in page, or invalid spreadsheet response:** verify `/exec`, access setting, execution account, and deployed version. Do not publish the spreadsheet to the web as a workaround.
 - **Missing/duplicate job number:** correct that row's unique identifier before retrying. Do not renumber all jobs.
 - **Missing column / Sheet1:** restore the expected header/tab name or adapt the script deliberately.
-- **Starter workspace:** database and authentication setup is still incomplete.
+- **Starter workspace:** database setup is still incomplete.
 
 This setup creates no paid services or billing subscriptions. Existing hosting/database plans and Google service quotas still apply.

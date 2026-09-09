@@ -6,7 +6,7 @@ import { setStarterPreview, starterUser } from "../lib/starterPreview";
 import type { AuthUser } from "../lib/authContext";
 
 type GoogleProfile = Pick<AuthUser, "email" | "name" | "pictureUrl">;
-type AuthConfig = { enabled: boolean; clientId: string; state: string; signupCodeRequired: boolean };
+type AuthConfig = { enabled: boolean; loginRequired?: boolean; clientId: string; state: string; signupCodeRequired: boolean };
 type GoogleCredentialResponse = { credential: string };
 type GoogleIdentity = {
   initialize: (options: { client_id: string; callback: (response: GoogleCredentialResponse) => void; use_fedcm_for_prompt?: boolean }) => void;
@@ -102,7 +102,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       if (!active) return;
       setConfig(nextConfig);
       setStarterPreview(!nextConfig.enabled);
-      setUser(session.user);
+      setUser(session.user ? { ...session.user, sharedWorkspace: nextConfig.loginRequired === false } : null);
     }).catch((loadError) => {
       if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load sign-in.");
     }).finally(() => {
@@ -174,6 +174,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (loading) return <LoadingScreen />;
   if (user) return <AuthContext.Provider value={{ user, updateProfile, signOut, deleteAccount }}>{children}</AuthContext.Provider>;
+
+  if (config?.enabled && config.loginRequired === false) {
+    return <AuthShell><p className="text-sm text-rose-700">{error || "Unable to open the workspace. Refresh and try again."}</p></AuthShell>;
+  }
 
   if (!config?.enabled) {
     if (config) return <AuthContext.Provider value={{ user: starterUser, updateProfile: async () => { throw new Error("Connect this workspace before saving a profile."); }, signOut: async () => {}, deleteAccount: async () => { throw new Error("There is no account to delete in this starter workspace."); } }}>{children}</AuthContext.Provider>;

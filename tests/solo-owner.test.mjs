@@ -24,6 +24,7 @@ test('employee, staffing and payroll endpoints are removed', () => {
 test('employee signup is rejected before creating an account', async () => {
   const route = routes.find((item) => item.arguments[0].text === '/api/auth/register');
   const register = vm.runInNewContext(`(${route.arguments.at(-1).getText(tree)})`, {
+    loginRequired: true,
     validAuthState: () => true,
     verifyGoogleCredential: () => { throw new Error('Must not verify or create an employee account'); },
   });
