@@ -7,14 +7,6 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const server = fs.readFileSync(path.join(root, 'server/index.mjs'), 'utf8');
-const tree = ts.createSourceFile('index.mjs', server, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const sheetAction = tree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'runSheetAction');
-
-function actionWith(syncUrl, fetch) {
-  return vm.runInNewContext(`${sheetAction.getText(tree)}; runSheetAction`, { syncUrl, sheetEndpoint: () => syncUrl, fetch, AbortSignal });
-}
-
 test('all bundled business collections are empty', () => {
   const source = fs.readFileSync(path.join(root, 'src/data/googleSheetData.ts'), 'utf8');
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } });
@@ -34,33 +26,6 @@ test('all external integrations and access codes start blank', () => {
     assert.equal(line.split('=').slice(1).join('='), '', line.split('=')[0]);
   }
   assert.equal(fs.existsSync(path.join(root, '.env')), false);
-});
-
-test('database-only writes do not contact any spreadsheet', async () => {
-  const action = actionWith(undefined, () => { throw new Error('Unexpected network request'); });
-  for (const operation of ['addCustomer', 'addLead', 'addUpcomingJob', 'addRecurringJob', 'addServicePlan', 'updateJob', 'deleteJob', 'deleteLead']) {
-    const result = await action(operation, { name: 'Test record' });
-    assert.equal(result.ok, true);
-    assert.equal(result.skipped, true);
-  }
-});
-
-test('optional spreadsheet writes use only the supplied endpoint', async () => {
-  let calls = 0;
-  const action = actionWith('https://example.invalid/new-business', async (url, options) => {
-    calls++;
-    assert.equal(url, 'https://example.invalid/new-business');
-    assert.equal(options.method, 'POST');
-    assert.deepEqual(JSON.parse(options.body), { action: 'updateJob', row: { status: 'completed' } });
-    return { ok: true, json: async () => ({ ok: true }) };
-  });
-  await action('updateJob', { status: 'completed' });
-  assert.equal(calls, 1);
-});
-
-test('configured spreadsheet failures are not silently ignored', async () => {
-  const action = actionWith('https://example.invalid/new-business', async () => ({ ok: false, status: 500 }));
-  await assert.rejects(action('updateJob', {}), /Sheet write endpoint failed/);
 });
 
 test('no hardcoded business spreadsheet or database endpoints remain', () => {

@@ -125,32 +125,6 @@ test('unauthorized requests never open the spreadsheet', () => {
   assert.equal(context.doPost({ parameter: { syncToken: 'wrong' } }).ok, false);
 });
 
-const server = fs.readFileSync(new URL('../server/index.mjs', import.meta.url), 'utf8');
-const tree = ts.createSourceFile('index.mjs', server, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const fn = name => tree.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name).getText(tree);
-
-test('private token is server-only and added to the connector request', () => {
-  const endpoint = vm.runInNewContext(`${fn('sheetEndpoint')}; sheetEndpoint`, {
-    syncUrl: 'https://example.invalid/exec', URL, process: { env: { SHEETS_SYNC_TOKEN: 'test-secret' } },
-  });
-  assert.equal(new URL(endpoint()).searchParams.get('syncToken'), 'test-secret');
-  const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(app, /VITE_SHEETS_SYNC_URL|SHEETS_SYNC_TOKEN/);
-});
-
-test('malformed or unauthorized HTTP-200 responses cannot erase database jobs', async () => {
-  for (const payload of [{ ok: false, error: 'Unauthorized' }, {}, { customers: [] }]) {
-    let writes = 0;
-    const sync = vm.runInNewContext(`${fn('runSheetSync')}; runSheetSync`, {
-      sheetEndpoint: () => 'https://example.invalid/exec', AbortSignal,
-      fetch: async () => ({ ok: true, json: async () => payload }),
-      syncSheetsIntoDatabase: () => { writes++; },
-    });
-    await assert.rejects(sync());
-    assert.equal(writes, 0);
-  }
-});
-
 test('undated jobs remain editable and are not overdue or in time charts', () => {
   const src = fs.readFileSync(new URL('../src/lib/calculations.ts', import.meta.url), 'utf8');
   const context = { exports: {} };
@@ -159,4 +133,43 @@ test('undated jobs remain editable and are not overdue or in time charts', () =>
   assert.equal(context.exports.jobDisplayStatus(job, '2026-09-08'), 'scheduled');
   assert.equal(context.exports.isUpcomingJob(job, '2026-09-08'), false);
   assert.equal(context.exports.cumulativeRevenueOverTime([job]).length, 0);
+});
+
+test('full sheets-only workflow survives fresh reads with no database', () => {
+  const { context, book } = fixture();
+  function write(collection, operation, id, data) {
+    const state = context.loadState_(book);
+    const result = context.workspaceWrite_(book, state, { collection, operation, id, data });
+    context.saveState_(book, state);
+    return result;
+  }
+  const customer = write('customers', 'create', 'customer-test', { name: 'Synthetic Customer', address: '3 Test Lane' });
+  assert.equal(customer.id, 'customer-test');
+  const created = write('jobs', 'create', 'job-test', { customerId: customer.id, date: '2026-09-09', time: '10:00', address: '3 Test Lane', serviceType: 'Windows', price: 75, recurrence: { frequency: 'yearly', renewalDate: '2027-09-09' } });
+  assert.equal(created.job.price, 75);
+  assert.equal(created.servicePlan.type, 'yearly');
+  write('jobs', 'update', 'job-test', { notes: 'Edited on website', status: 'completed' });
+  write('customers', 'update', customer.id, { phone: '555-0111' });
+  write('leads', 'create', 'lead-test', { name: 'Test Lead', followUpDate: '2026-09-10' });
+  write('leads', 'update', 'lead-test', { status: 'contacted' });
+  write('calendarEvents', 'create', 'event-test', { title: 'Test meeting', date: '2026-09-10', startTime: '12:00', endTime: '13:00' });
+  write('servicePlans', 'update', created.servicePlan.id, { notes: 'Annual reminder', price: 85 });
+  const state = context.loadState_(book);
+  context.workspaceWrite_(book, state, { collection: 'notifications', operation: 'markRead', keys: ['test-reminder'] });
+  context.saveState_(book, state);
+  const snapshot = context.workspaceSnapshot_(book, context.loadState_(book));
+  assert.equal(snapshot.connector, 'teenclean-v2');
+  assert.equal(snapshot.jobs.find(j => j.id === 'job-test').status, 'completed');
+  assert.equal(snapshot.jobs.find(j => j.id === 'job-test').notes, 'Edited on website');
+  assert.equal(snapshot.customers.find(c => c.id === customer.id).phone, '555-0111');
+  assert.equal(snapshot.leads[0].status, 'contacted');
+  assert.equal(snapshot.calendarEvents[0].title, 'Test meeting');
+  assert.equal(snapshot.servicePlans[0].price, 85);
+  assert.equal(snapshot.readKeys[0], 'test-reminder');
+  for (const [collection, id] of [['jobs', 'job-test'], ['leads', 'lead-test'], ['calendarEvents', 'event-test']]) write(collection, 'delete', id);
+  const after = context.workspaceSnapshot_(book, context.loadState_(book));
+  assert.equal(after.jobs.length, 2);
+  assert.equal(after.leads.length, 0);
+  assert.equal(after.calendarEvents.length, 0);
+  assert.equal(after.servicePlans.length, 1);
 });

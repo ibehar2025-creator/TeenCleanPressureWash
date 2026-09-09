@@ -1,54 +1,42 @@
 # TeenCleanPressureWash
 
-An independent pressure-washing business dashboard with fresh Git history and no preloaded business records. No database, spreadsheet, login account, API key, billing account, or hosting service is connected by default.
+Google Sheets is the only persistent business-data store. No Supabase/Postgres database, Google login, employee features or Maps integration is required or included in the running site.
 
-## Included
+## Connect the existing spreadsheet
 
-- Owner dashboard and analytics; job creation, editing, calendar events, and recurring service plans.
-- Leads, follow-up reminders, personal notification inboxes, and job/solicitation maps.
-- Solo-owner workspace, optional Google sign-in, mobile layouts, and installable app support.
+1. Back up the spreadsheet.
+2. Update its bound Apps Script with [google-sheets/Code.gs](google-sheets/Code.gs). Run `setupTeenClean` if it has not been run before.
+3. Deploy a **new version** of the web app: execute as the sheet owner, access Anyone. Keep the spreadsheet private; every connector request requires a private token.
+4. In this site's Render Environment settings, set `SHEETS_SYNC_URL` to the `/exec` deployment URL and `SHEETS_SYNC_TOKEN` to the script's private `SYNC_TOKEN`. Set `VITE_JOBS_SHEET_URL` to the spreadsheet's ordinary browser URL.
+5. Build with `npm ci && npm run build`, start with `npm start`. Remove any old database migration or seed pre-deploy command. Rebuild after changing `VITE_JOBS_SHEET_URL`.
+6. Open the site and click **Refresh**. Jobs are fetched directly from the connector. An old script version, missing configuration or Google error now produces an explicit error rather than empty success.
 
-## First setup
+See [the detailed guide](google-sheets/SETUP.md) for Google deployment screens. No new token or deployment URL is needed when updating an existing deployment version.
 
-1. Install Node.js 22 or newer and run `npm ci`.
-2. Create a new Postgres database (a separate Supabase project is supported). Do not point this application at an existing business's database.
-3. Create `.env` from `.env.example` and enter the new database connection string in `DATABASE_URL`. Do not commit `.env`.
-4. Initialize the empty database with `node --env-file=.env server/migrate.mjs`.
-5. Run `npm run build`, then `node --env-file=.env server/index.mjs`. Open `http://localhost:4173`. No Google login or signup code is required by default.
+## What is stored where
 
-Without a database, the application opens an empty starter dashboard. Refresh explicitly reports that database setup is needed. Once the database is configured and initialized, it opens directly to real records without login. It does not connect to another business as a fallback.
+- `Sheet1`: jobs, customer names, phone numbers, addresses, dates, prices, statuses and job notes. Existing columns and totals are preserved; blank placeholders and totals are not imported as jobs.
+- `_TeenCleanSync` hidden helper tab: job IDs/times, customer details, leads, calendar events, recurring service plans and notification read state. These records are JSON rows managed by the website. Edit these extra records through the site, not by changing the helper JSON.
+- Dashboard and analytics: calculated from the fetched records. There is no second copy in a database or bundled customer-data file.
+- No offline saving: if Sheets cannot confirm a write, the site reports an error. Check Refresh before repeating a save whose outcome is uncertain. Backups remain important; a multi-cell Sheets write is not an atomic transaction.
 
-**Access warning:** login is off by default at the owner's request. Anyone who reaches the deployed URL can view customer information and create, edit or delete business records, including spreadsheet-backed jobs. Notifications share one workspace inbox; they are not private per person. Keep credentials server-side and consider network-level access restrictions before using real customer data.
+Map and solicitation tracking have been removed. Imported notes mentioning recurrence are not automatically turned into service plans; create plans through the website. Existing records in an unrelated database are not migrated or deleted by this change.
 
-To restore Google login later, set `REQUIRE_LOGIN=true`, configure `GOOGLE_CLIENT_ID` with the website origin authorized, and set a private `AUTH_OWNER_CODE`. Redeploy, then register the owner. In no-login mode, a non-person shared database identity supports notification/audit references; it has no personal profile or sign-out/delete-account controls.
+## Access and credentials
 
-## Optional Google Sheets
+This site has no login at the owner's request. **Anyone with the URL can view and change business records, including deleting jobs.** Notifications use one shared inbox. The connector token stays on the server and protects the raw Apps Script endpoint, not access to the public website.
 
-Leave `SHEETS_SYNC_URL` blank to use the website with its own database only. Job creation, editing, and other database workflows do not require a spreadsheet. The refresh button reloads database records when no spreadsheet is configured.
+Only the three Sheets variables above are used. Remove obsolete `DATABASE_URL`, Google login/code variables and `VITE_GOOGLE_MAPS_API_KEY` from this Render service. Removing the Maps code prevents this site from loading the Maps API; it does not cancel an existing Google billing account or erase previous charges. Do not disable anything belonging to the original business.
 
-The included [Apps Script connector and setup guide](google-sheets/SETUP.md) supports the existing `Sheet1` customer/jobs layout. Deploy it from the friend's spreadsheet, then configure server-only `SHEETS_SYNC_URL` and `SHEETS_SYNC_TOKEN`, plus `VITE_JOBS_SHEET_URL` for the browser link. Rebuild after changing a `VITE_` variable. The sync endpoint is not a normal spreadsheet sharing link.
+## Local development and verification
 
-GET must return `customers` and `jobs` arrays with stable unique IDs matching `src/types/business.ts`; other collections are optional. POST accepts `{ action, row }` and must return `{ ok: true }` on successful writes. The supplied connector syncs jobs and customer data; leads and recurring-plan details remain database-backed. TBD jobs remain undated, and spreadsheet total/placeholder rows are excluded. Deployment and Google authorization must be completed by the spreadsheet owner.
-
-## Optional maps
-
-Provide `VITE_GOOGLE_MAPS_API_KEY` from this business's own Google Cloud project to enable the existing Google Maps features. Restrict it to the new site's domains and required Maps APIs. This repository creates no Google billing account or paid services.
-
-## Hosting
-
-Create a separate Node web service connected to this repository. Build with `npm ci && npm run build`, initialize the new database with `npm run db:migrate` once, and start with `npm start`. Configure the environment variables from `.env.example` on the new service. Use `NODE_ENV=production` for hosting. The server honors the provider's `PORT` and exposes `/api/health`.
-
-For Supabase, run the migration using a trusted server database connection. Browser requests go through the Express API, not directly to database tables. Keep database credentials server-side; do not enable public table access for the browser.
-
-Update the OAuth authorized origin and Maps key restrictions for the deployed URL. Installable app features require HTTPS outside localhost. No hosting deployment is created by cloning this repo.
-
-## Checks
+Node.js 22+ is supported. Install with `npm ci`; use a private `.env` based on `.env.example`, then run `npm run build` and `node --env-file=.env server/index.mjs`. The site opens at `http://localhost:4173`.
 
 ```sh
 npm run build
 npm run lint
 node --check server/index.mjs
-node --test tests/isolation.test.mjs tests/solo-owner.test.mjs tests/sheets-connector.test.mjs tests/open-workspace.test.mjs
+node --test tests/isolation.test.mjs tests/sheets-connector.test.mjs tests/sheets-server.test.mjs
 ```
 
-`src/data/googleSheetData.ts` contains only empty collections and new-business defaults. Optional integration values are blank in `.env.example`. Credentials, historical customer records, and the source business's Git history are excluded.
+Automated tests use synthetic records, including two-way job changes, retained totals, TBD dates, recurring jobs, leads, events, notification state, missing configuration and connector-version errors. Live Apps Script authorization/deployment is performed by the sheet owner.

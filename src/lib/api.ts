@@ -1,5 +1,4 @@
 import type { CalendarEvent, Customer, Expense, Invoice, Job, JobCreateInput, Lead, Review, ServicePlan, ServicePlanCreateInput, Solicitation } from "../types/business";
-import { emptyStarterRecords, isStarterPreview } from "./starterPreview";
 
 export type DatabaseSnapshot = Partial<{
   customers: Customer[];
@@ -21,18 +20,11 @@ export interface SolicitationSaveResult {
 
 
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
-  if (isStarterPreview()) {
-    if (path === "/api/bootstrap") return emptyStarterRecords() as T;
-    if (path === "/api/sync-sheets") throw new Error("Connect DATABASE_URL and initialize the database before syncing Google Sheets.");
-    if (options?.method && options.method !== "GET") throw new Error("Connect your own database before saving records.");
-    return null;
-  }
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
 
-  if (response.status === 503 || response.status === 404) return null;
   if (!response.ok) {
     const detail = await response.json().catch(() => null) as { error?: string; detail?: string } | null;
     const message = detail?.error === "Server error" ? detail.detail : detail?.error;
@@ -42,11 +34,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T | null
   return response.json() as Promise<T>;
 }
 
-export function loadDatabaseSnapshot() {
+export function loadSheetSnapshot() {
   return request<DatabaseSnapshot>("/api/bootstrap");
 }
 
-export function syncSheetsToDatabase() {
+export function refreshSheetSnapshot() {
   return request<DatabaseSnapshot>("/api/sync-sheets", { method: "POST" });
 }
 

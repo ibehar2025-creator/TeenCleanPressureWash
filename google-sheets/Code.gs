@@ -28,10 +28,12 @@ function handle_(e, write) {
     var result;
     if (write) {
       var request = JSON.parse(e.postData.contents);
-      result = writeAction_(book, state, request.action, request.row || {});
+      result = request.action === 'workspaceWrite'
+        ? { ok: true, connector: 'teenclean-v2', result: workspaceWrite_(book, state, request.row || {}) }
+        : writeAction_(book, state, request.action, request.row || {});
       saveState_(book, state);
       SpreadsheetApp.flush();
-    } else result = readJobs_(book, state);
+    } else result = workspaceSnapshot_(book, state);
     return json_(result);
   } catch (error) {
     return json_({ ok: false, error: String(error.message || error) });
@@ -46,7 +48,7 @@ function json_(value) {
 
 function loadState_(book) {
   var sheet = book.getSheetByName('_TeenCleanSync');
-  var state = { jobs: {}, customers: {} };
+  var state = { jobs: {}, customers: {}, leads: {}, servicePlans: {}, calendarEvents: {}, notifications: {} };
   if (!sheet || sheet.getLastRow() < 2) return state;
   sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues().forEach(function(row) {
     if (state[row[0]] && row[1] && row[2]) state[row[0]][row[1]] = JSON.parse(row[2]);
@@ -147,6 +149,111 @@ function readJobs_(book, state) {
 
 function safeValue_(value) {
   return typeof value === 'string' && /^[=+@-]/.test(value) ? "'" + value : value;
+}
+
+function workspaceSnapshot_(book, state) {
+  var result = readJobs_(book, state);
+  result.connector = 'teenclean-v2';
+  ['leads', 'servicePlans', 'calendarEvents'].forEach(function(key) {
+    result[key] = Object.keys(state[key] || {}).map(function(id) { return state[key][id]; });
+  });
+  result.readKeys = Object.keys(state.notifications || {});
+  result.invoices = []; result.expenses = []; result.reviews = []; result.solicitations = [];
+  return result;
+}
+
+function workspaceWrite_(book, state, request) {
+  var collection = request.collection, operation = request.operation, id = text_(request.id);
+  ['leads', 'servicePlans', 'calendarEvents', 'notifications'].forEach(function(key) { state[key] = state[key] || {}; });
+  if (collection === 'notifications' && operation === 'markRead') {
+    if (!Array.isArray(request.keys) || request.keys.length > 500) throw new Error('Invalid notification keys.');
+    request.keys.forEach(function(key) {
+      if (typeof key !== 'string' || key.length > 4000 || ['__proto__', 'constructor', 'prototype'].indexOf(key) >= 0) throw new Error('Invalid notification key.');
+      state.notifications[key] = { readAt: new Date().toISOString() };
+    });
+    return { readKeys: Object.keys(state.notifications) };
+  }
+  if (['customers', 'jobs', 'leads', 'servicePlans', 'calendarEvents'].indexOf(collection) < 0 || ['create', 'update', 'delete'].indexOf(operation) < 0) throw new Error('Unsupported record operation.');
+  if (!id || !/^[a-zA-Z0-9-]+$/.test(id)) throw new Error('Invalid record ID.');
+  var snapshot = workspaceSnapshot_(book, state);
+  var existing = snapshot[collection].filter(function(item) { return item.id === id; })[0];
+  if (operation !== 'create' && !existing) {
+    if (operation === 'delete') return { deleted: true };
+    throw new Error('Record no longer exists. Refresh before editing.');
+  }
+  if (operation === 'delete') {
+    if (collection === 'jobs') writeAction_(book, state, 'deleteJob', { jobId: id });
+    else if (collection === 'leads' || collection === 'calendarEvents') delete state[collection][id];
+    else throw new Error('Deletion is not supported for this record.');
+    return { deleted: true };
+  }
+  var input = request.data || {};
+  var defaults = {
+    customers: { name: '', phone: '', email: '', address: '', notes: '', insights: [] },
+    jobs: { customerId: '', date: '', time: '', price: 0, address: '', serviceType: '', notes: '', status: 'scheduled', tipAmount: 0 },
+    leads: { name: '', contact: '', address: '', status: 'new', estimatedValue: 0, followUpDate: '', notes: '', source: 'Website' },
+    servicePlans: { customerId: '', type: 'yearly', price: 0, discountPct: 0, renewalDate: '', servicesIncluded: [], paymentStatus: 'unpaid', notes: '' },
+    calendarEvents: { title: '', type: 'meeting', date: '', startTime: '', endTime: '', location: '', notes: '' },
+  };
+  var record = Object.assign({}, defaults[collection], existing || {});
+  Object.keys(defaults[collection]).forEach(function(key) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) record[key] = input[key];
+  });
+  record.id = id;
+  Object.keys(defaults[collection]).forEach(function(key) {
+    if (typeof defaults[collection][key] === 'string') {
+      if (typeof record[key] !== 'string' || record[key].length > 12000) throw new Error('Invalid ' + key + '.');
+      record[key] = text_(record[key]);
+    }
+  });
+  if (JSON.stringify(record).length > 40000) throw new Error('Record is too large for a spreadsheet cell.');
+  if (collection === 'jobs' || collection === 'servicePlans') {
+    var customer = snapshot.customers.filter(function(item) { return item.id === record.customerId; })[0];
+    if (!customer) throw new Error('Choose or create a customer first.');
+    record.price = amount_(record.price);
+  }
+  if (collection === 'jobs') {
+    if (!record.address || !record.serviceType) throw new Error('Address and service are required.');
+    record.date = date_(record.date); record.time = time_(record.time); record.status = status_(record.status);
+    record.tipAmount = amount_(record.tipAmount);
+    var plan;
+    if (operation === 'create' && input.recurrence) {
+      var recurrence = input.recurrence;
+      if (['monthly', '3-month', '4-month', '6-month', 'yearly'].indexOf(recurrence.frequency) < 0 || !date_(recurrence.renewalDate)) throw new Error('Invalid recurring frequency or renewal date.');
+      plan = { id: 'plan-' + id, customerId: record.customerId, type: recurrence.frequency, renewalDate: date_(recurrence.renewalDate), servicesIncluded: [record.serviceType], price: record.price, discountPct: 0, paymentStatus: 'unpaid', notes: record.notes };
+    }
+    writeAction_(book, state, operation === 'create' ? 'addUpcomingJob' : 'updateJob', Object.assign({}, record, { jobId: id, name: customer.name, phone: customer.phone }));
+    if (plan) state.servicePlans[plan.id] = plan;
+    var job = readJobs_(book, state).jobs.filter(function(item) { return item.id === id; })[0];
+    return operation === 'create' ? { job: job, servicePlan: plan } : job;
+  }
+  if (collection === 'customers') {
+    if (!record.name) throw new Error('Customer name is required.');
+    record.insights = existing ? existing.insights : [];
+    state.customers[id] = record;
+    snapshot.jobs.filter(function(job) { return job.customerId === id; }).forEach(function(job) {
+      writeAction_(book, state, 'updateJob', { jobId: job.id, customerId: id, name: record.name, phone: record.phone, address: record.address || job.address });
+    });
+  }
+  if (collection === 'leads') {
+    if (!record.name || ['new', 'contacted', 'quoted', 'scheduled', 'won', 'lost'].indexOf(record.status) < 0) throw new Error('Lead name and valid status are required.');
+    record.estimatedValue = amount_(record.estimatedValue); record.followUpDate = date_(record.followUpDate);
+  }
+  if (collection === 'servicePlans') {
+    if (['monthly', '3-month', '4-month', '6-month', 'yearly'].indexOf(record.type) < 0) throw new Error('Invalid plan frequency.');
+    record.renewalDate = date_(record.renewalDate);
+    if (!record.renewalDate || !Array.isArray(record.servicesIncluded) || record.servicesIncluded.some(function(v) { return typeof v !== 'string'; })) throw new Error('Renewal date and services are required.');
+    record.discountPct = amount_(record.discountPct);
+    if (record.discountPct > 100) throw new Error('Discount cannot exceed 100%.');
+  }
+  if (collection === 'calendarEvents') {
+    record.date = date_(record.date); record.startTime = time_(record.startTime); record.endTime = time_(record.endTime);
+    if (!record.title || !record.date || !record.startTime) throw new Error('Event title, date and time are required.');
+    if (record.endTime && record.endTime < record.startTime) throw new Error('End time must be after start time.');
+    if (['meeting', 'soliciting', 'estimate', 'reminder', 'other'].indexOf(record.type) < 0) throw new Error('Invalid event type.');
+  }
+  state[collection][id] = record;
+  return record;
 }
 function writeAction_(book, state, action, input) {
   // Only the existing customer/jobs sheet is connected. Leads and plans stay database-backed.

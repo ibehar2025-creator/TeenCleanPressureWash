@@ -31,7 +31,7 @@ Only edit the Render service connected to the TeenCleanPressureWash repo.
 
 Save and rebuild/redeploy, since `VITE_JOBS_SHEET_URL` is baked into the frontend. The URL and token for syncing stay server-side. Do not use `VITE_SHEETS_SYNC_URL`.
 
-Real saving requires the friend's own `DATABASE_URL` and the database migration described in the main README. Google login and a signup code are no longer required by default. The empty starter dashboard cannot save or import real records. No existing business's credentials should be reused. Without login, anyone with the website URL can access and change records.
+No database, migration, Google login or signup code is needed. Remove any old database migration command from Render's pre-deploy settings. Without login, anyone with the website URL can access and change records. This version requires the updated v2 Code.gs deployment, not just a website rebuild.
 
 ## 4. Verify
 
@@ -39,9 +39,9 @@ Real saving requires the friend's own `DATABASE_URL` and the database migration 
 2. Check several jobs against the spreadsheet, including a Finished job and a TBD-date job. Totals and placeholder rows should not appear as jobs.
 3. Add a clearly labeled test job on the website. Confirm it appears once in Sheet1, before the total row, and the total formula includes it.
 4. Edit its notes, price and status on the website. Confirm those cells change in Sheets. Change a note in Sheets and click **Sync sheets** to confirm the reverse direction.
-5. Refresh the page to verify database persistence. Then remove the test job through the website and verify its sheet fields are cleared.
+5. Refresh the page to verify spreadsheet persistence. Then remove the test job through the website and verify its sheet fields are cleared.
 
-Automatic refresh uses the server's existing 30-minute stale-data interval when the application requests a refresh. This is not a standalone background scheduler. Use **Sync sheets** for an immediate pull.
+Opening the site or clicking **Refresh** pulls from Sheets directly. Concurrent reads are combined, but there is no persistent server cache or background scheduler.
 
 ## Supported layout and behavior
 
@@ -54,9 +54,9 @@ Keep the tab named `Sheet1`. Headers are matched by name, so column order can ch
 - Finished/Complete/Completed becomes completed on the website; website completion writes `Finished`. TBD becomes scheduled; date `TBD` stays undated, not overdue or on the calendar.
 - Empty placeholder rows and the total row are not imported. Invalid dates/statuses or duplicate job numbers stop the sync instead of overwriting records with incomplete data.
 - Existing jobs without times are not given invented appointment times. Website times, stable website IDs, and extra metadata are stored in a hidden `_TeenCleanSync` tab created on the first website write. Do not delete it. Add an optional `Time` column to Sheet1 to view/edit appointment times there instead.
-- Website job creation, editing and deletion update Sheet1. New jobs are inserted before the total, not automatically date-sorted. Deletion clears job fields but keeps the number reserved and preserves other rows and charts. Backups are still important: Sheets and the database are separate systems, not one atomic transaction.
+- Website job creation, editing and deletion update Sheet1. New jobs are inserted before the total, not automatically date-sorted. Deletion clears job fields but keeps the number reserved and preserves other rows and charts. Backups are still important: multi-cell Sheets operations are not atomic transactions.
 - Repeated customer names at the same address are grouped on import. New customers are kept in the helper tab until a job creates their visible Sheet1 row.
-- This sheet has no leads or recurring-plan table. Leads and service-plan details stay in the database. Creating a recurring job adds its job to Sheet1, but its renewal schedule is database-only. Free-text recurrence in a job description is not automatically converted into a service plan.
+- Leads, recurring service plans, calendar events and notification read state are stored as JSON records in `_TeenCleanSync`. Manage them through the website. Creating a recurring job adds its job to Sheet1 and its plan to that helper tab. Free-text recurrence in a job description is not automatically converted into a service plan.
 - The spreadsheet is authoritative for imported job fields at the next successful sync. Avoid simultaneous edits to the same job in both places.
 
 ## Troubleshooting
@@ -65,6 +65,6 @@ Keep the tab named `Sheet1`. Headers are matched by name, so column order can ch
 - **HTML, Google sign-in page, or invalid spreadsheet response:** verify `/exec`, access setting, execution account, and deployed version. Do not publish the spreadsheet to the web as a workaround.
 - **Missing/duplicate job number:** correct that row's unique identifier before retrying. Do not renumber all jobs.
 - **Missing column / Sheet1:** restore the expected header/tab name or adapt the script deliberately.
-- **Starter workspace:** database setup is still incomplete.
+- **Update Code.gs:** save the new script and deploy a new version of the existing deployment.
 
-This setup creates no paid services or billing subscriptions. Existing hosting/database plans and Google service quotas still apply.
+This setup creates no paid services or billing subscriptions. Existing hosting plans and Google service quotas still apply.

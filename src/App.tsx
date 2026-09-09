@@ -12,7 +12,6 @@ import {
   ClipboardList,
   ExternalLink,
   LayoutDashboard,
-  MapPinned,
   Menu,
   Pencil,
   Plus,
@@ -52,13 +51,13 @@ import {
   jobsForCustomer,
   recurringPlanType,
 } from "./lib/calculations";
-import { createCalendarEvent, createCustomer, createJob, createLead, createServicePlan, createSolicitation, deleteCalendarEvent, deleteJob, deleteLead, deleteSolicitation, loadDatabaseSnapshot, saveCalendarEventPatch, saveCustomerPatch, saveJobPatch, saveLeadPatch, saveServicePlanPatch, saveSolicitationPatch, syncSheetsToDatabase } from "./lib/api";
+import { createCalendarEvent, createCustomer, createJob, createLead, createServicePlan, deleteCalendarEvent, deleteJob, deleteLead, loadSheetSnapshot, saveCalendarEventPatch, saveCustomerPatch, saveJobPatch, saveLeadPatch, saveServicePlanPatch, refreshSheetSnapshot } from "./lib/api";
 import { followUpLabel, followUpTiming } from "./lib/followUps";
-import type { CalendarEvent, CalendarEventType, Customer, Expense, Invoice, Job, JobCreateInput, Lead, LeadStatus, PaymentStatus, ServicePlan, ServicePlanCreateInput, Solicitation } from "./types/business";
+import type { CalendarEvent, CalendarEventType, Customer, Expense, Invoice, Job, JobCreateInput, Lead, LeadStatus, PaymentStatus, ServicePlan, ServicePlanCreateInput } from "./types/business";
 
 type ReviewRow = { id: string; submittedAt: string; name: string; rating: number; review: string; source: string };
-type TabId = "dashboard" | "customers" | "leads" | "jobs" | "calendar" | "map" | "analytics" | "plans";
-type SyncPayload = Partial<{ customers: Customer[]; jobs: Job[]; leads: Lead[]; invoices: Invoice[]; servicePlans: ServicePlan[]; reviews: ReviewRow[]; expenses: Expense[]; solicitations: Solicitation[]; calendarEvents: CalendarEvent[] }>;
+type TabId = "dashboard" | "customers" | "leads" | "jobs" | "calendar" | "analytics" | "plans";
+type SyncPayload = Partial<{ customers: Customer[]; jobs: Job[]; leads: Lead[]; invoices: Invoice[]; servicePlans: ServicePlan[]; reviews: ReviewRow[]; expenses: Expense[]; calendarEvents: CalendarEvent[] }>;
 type CalendarDay = { label: string; date: string };
 
 const tabs: { id: TabId; label: string; icon: ElementType; mobileOnly?: boolean }[] = [
@@ -66,7 +65,6 @@ const tabs: { id: TabId; label: string; icon: ElementType; mobileOnly?: boolean 
   { id: "leads", label: "Leads", icon: Sparkles },
   { id: "jobs", label: "Jobs", icon: BriefcaseBusiness },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
-  { id: "map", label: "Map", icon: MapPinned },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "plans", label: "Service Plans", icon: ClipboardList },
 ];
@@ -80,7 +78,6 @@ const dayFormatter = new Intl.DateTimeFormat("en-US", { weekday: "short" });
 const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
 const fullDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
 const calendarSkeletonDurationMs = 1_500;
-const BusinessMap = lazy(() => import("./components/BusinessMap").then((module) => ({ default: module.BusinessMap })));
 const Analytics = lazy(() => import("./components/Analytics").then((module) => ({ default: module.Analytics })));
 
 function TabLoader({ label }: { label: string }) {
@@ -257,12 +254,10 @@ function OwnerDashboard() {
   const [savedExpenses, setSavedExpenses] = useState<Expense[]>(expenses);
   const [plans, setPlans] = useState<ServicePlan[]>(normalizePlans(importedServicePlans));
   const [reviews, setReviews] = useState<ReviewRow[]>(importedReviews);
-  const [solicitations, setSolicitations] = useState<Solicitation[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [mapJobFocus, setMapJobFocus] = useState<{ jobId: string; requestId: number } | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [createKind, setCreateKind] = useState<CreateKind | null>(null);
   const [themePreference, setThemePreference] = useState(() => loadThemePreference(user.id));
@@ -287,7 +282,7 @@ function OwnerDashboard() {
     }
     setShowCalendarSkeleton(true);
     try {
-      const payload = await syncSheetsToDatabase() as SyncPayload | null;
+      const payload = await refreshSheetSnapshot() as SyncPayload | null;
       if (!payload) throw new Error("Live sync is not configured on this deployment.");
       if (payload.customers) setCustomers(mergeRecurringCustomers(payload.customers, payload.servicePlans ?? []));
       if (payload.jobs) setJobs(payload.jobs.map((job) => ({ ...job, crewIds: [] })));
@@ -296,7 +291,6 @@ function OwnerDashboard() {
       if (payload.expenses) setSavedExpenses(payload.expenses);
       if (payload.servicePlans) setPlans(normalizePlans(payload.servicePlans));
       if (payload.reviews) setReviews(payload.reviews);
-      if (payload.solicitations) setSolicitations(payload.solicitations);
       if (payload.calendarEvents) setCalendarEvents(payload.calendarEvents);
       setSyncStatus(isStarterPreview() ? "Starter workspace" : `Business records refreshed at ${new Date().toLocaleTimeString()}.`);
     } catch (error) {
@@ -331,7 +325,7 @@ function OwnerDashboard() {
 
   useEffect(() => {
     let ignore = false;
-    void loadDatabaseSnapshot()
+    void loadSheetSnapshot()
       .then((payload) => {
         if (ignore || !payload) return;
         if (payload.customers) setCustomers(mergeRecurringCustomers(payload.customers, payload.servicePlans ?? []));
@@ -341,12 +335,11 @@ function OwnerDashboard() {
         if (payload.expenses) setSavedExpenses(payload.expenses);
         if (payload.servicePlans) setPlans(normalizePlans(payload.servicePlans));
         if (payload.reviews) setReviews(payload.reviews);
-        if (payload.solicitations) setSolicitations(payload.solicitations);
         if (payload.calendarEvents) setCalendarEvents(payload.calendarEvents);
-        setSyncStatus(isStarterPreview() ? "Starter workspace" : "Loaded saved database records.");
+        setSyncStatus("Loaded directly from Google Sheets.");
       })
       .catch((error) => {
-        setSyncStatus(error instanceof Error ? error.message : "Database load failed.");
+        setSyncStatus(error instanceof Error ? error.message : "Google Sheets load failed.");
       });
     return () => {
       ignore = true;
@@ -361,7 +354,7 @@ function OwnerDashboard() {
     const saved = await saveLeadPatch(leadId, patch);
     if (!saved) throw new Error("Lead save service is unavailable.");
     setLeads((current) => current.map((lead) => lead.id === leadId ? saved : lead));
-    setSyncStatus("Lead changes saved to the database.");
+    setSyncStatus("Lead changes saved to Google Sheets.");
     return saved;
   }
 
@@ -373,16 +366,9 @@ function OwnerDashboard() {
   }
 
   async function removeLead(leadId: string) {
-    const lead = leads.find((item) => item.id === leadId);
     const removed = await deleteLead(leadId);
     if (!removed?.deleted) throw new Error("Lead removal service is unavailable.");
     setLeads((current) => current.filter((lead) => lead.id !== leadId));
-    if (lead?.source === "Map solicitation" && lead.id.startsWith("solicitation-")) {
-      const solicitationId = lead.id.slice("solicitation-".length);
-      setSolicitations((current) => current.map((item) => item.id === solicitationId
-        ? { ...item, outcome: "no answer", followUpDate: "" }
-        : item));
-    }
     setSelectedLead(null);
     setSyncStatus("Lead removed from the website and Google Sheets.");
   }
@@ -391,7 +377,7 @@ function OwnerDashboard() {
     const saved = await createCustomer(draft);
     if (!saved) throw new Error("Customer creation service is unavailable.");
     setCustomers((current) => [...current, saved].sort((a, b) => a.name.localeCompare(b.name)));
-    setSyncStatus("New customer saved to the database.");
+    setSyncStatus("New customer saved to Google Sheets.");
     return saved;
   }
 
@@ -400,7 +386,7 @@ function OwnerDashboard() {
     if (!saved) throw new Error("Customer save service is unavailable.");
     setCustomers((current) => current.map((customer) => customer.id === customerId ? saved : customer));
     setSelectedCustomer((current) => current?.id === customerId ? saved : current);
-    setSyncStatus("Customer changes saved to the database.");
+    setSyncStatus("Customer changes saved to Google Sheets.");
   }
 
   async function updateJob(jobId: string, patch: Partial<Job>) {
@@ -416,7 +402,7 @@ function OwnerDashboard() {
     if (!saved) throw new Error("Job creation service is unavailable.");
     setJobs((current) => [...current, { ...saved.job, crewIds: saved.job.crewIds ?? [] }].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)));
     if (saved.servicePlan) setPlans((current) => normalizePlans([...current.filter((plan) => plan.id !== saved.servicePlan?.id), saved.servicePlan!]));
-    setSyncStatus(saved.servicePlan ? "Recurring job saved to Google Sheets and the database." : "New job saved to Google Sheets and the database.");
+    setSyncStatus(saved.servicePlan ? "Recurring job saved to Google Sheets." : "New job saved to Google Sheets.");
   }
 
   async function removeJob(jobId: string) {
@@ -450,29 +436,6 @@ function OwnerDashboard() {
     setSyncStatus("Calendar event removed.");
   }
 
-  const updateMapLead = useCallback((solicitation: Solicitation, savedLead?: Lead | null) => {
-    const leadId = `solicitation-${solicitation.id}`;
-    if (solicitation.outcome !== "follow up") {
-      setLeads((current) => current.filter((lead) => lead.id !== leadId || lead.source !== "Map solicitation"));
-      return;
-    }
-
-    const lead = savedLead ?? {
-      id: leadId,
-      name: "Map follow-up",
-      contact: "Contact info pending",
-      address: solicitation.address,
-      source: "Map solicitation",
-      status: "new" as LeadStatus,
-      estimatedValue: 0,
-      followUpDate: solicitation.followUpDate || "",
-      notes: solicitation.notes,
-    };
-    setLeads((current) => current.some((item) => item.id === lead.id)
-      ? current.map((item) => item.id === lead.id ? lead : item)
-      : [lead, ...current]);
-  }, []);
-
   async function updatePlan(planId: string, patch: Partial<ServicePlan>) {
     const saved = await saveServicePlanPatch(planId, patch);
     if (!saved) throw new Error("Service plan save service is unavailable.");
@@ -481,57 +444,12 @@ function OwnerDashboard() {
     return saved;
   }
 
-  const saveMapJobCoordinates = useCallback(async (jobIds: string[], coordinates: { latitude: number; longitude: number }) => {
-    async function persistCoordinates(jobId: string) {
-      let lastError: unknown;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-          const saved = await saveJobPatch(jobId, coordinates);
-          if (saved) return;
-          lastError = new Error("Coordinate save service is unavailable.");
-        } catch (error) {
-          lastError = error;
-        }
-        if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
-      }
-      throw lastError instanceof Error ? lastError : new Error("Unable to save job coordinates.");
-    }
-
-    await Promise.all(jobIds.map(persistCoordinates));
-    const idSet = new Set(jobIds);
-    setJobs((current) => current.map((job) => idSet.has(job.id) ? { ...job, ...coordinates } : job));
-  }, []);
-
-  const addSolicitation = useCallback(async (draft: Omit<Solicitation, "id">) => {
-    const saved = await createSolicitation(draft);
-    const solicitation = saved?.solicitation ?? { ...draft, id: crypto.randomUUID() };
-    setSolicitations((current) => [solicitation, ...current]);
-    updateMapLead(solicitation, saved?.lead);
-  }, [updateMapLead]);
-
-  const updateSolicitation = useCallback(async (id: string, patch: Partial<Solicitation>) => {
-    const saved = await saveSolicitationPatch(id, patch);
-    const existing = solicitations.find((item) => item.id === id);
-    const updated = saved?.solicitation ?? (existing ? { ...existing, ...patch } : undefined);
-    if (!updated) return;
-    setSolicitations((current) => current.map((item) => item.id === id ? updated : item));
-    updateMapLead(updated, saved?.lead);
-  }, [solicitations, updateMapLead]);
-
-  const removeSolicitation = useCallback(async (id: string) => {
-    const removed = await deleteSolicitation(id);
-    setSolicitations((current) => current.filter((item) => item.id !== id));
-    const removedLeadId = removed?.removedLeadId ?? `solicitation-${id}`;
-    setLeads((current) => current.filter((lead) => lead.id !== removedLeadId || lead.source !== "Map solicitation"));
-  }, []);
-
   function chooseTab(tabId: TabId) {
     if (tabId === "calendar" && !calendarSkeletonShown.current) {
       calendarSkeletonShown.current = true;
       setShowCalendarSkeleton(true);
       calendarSkeletonTimer.current = window.setTimeout(() => setShowCalendarSkeleton(false), calendarSkeletonDurationMs);
     }
-    if (tabId !== "map") setMapJobFocus(null);
     setActiveTab(tabId);
     setMobileMenuOpen(false);
   }
@@ -540,14 +458,8 @@ function OwnerDashboard() {
     const saved = await createServicePlan(draft);
     if (!saved) throw new Error("Service plan creation service is unavailable.");
     setPlans((current) => normalizePlans([...current, saved]));
-    setSyncStatus("Service plan saved to Google Sheets and the database.");
+    setSyncStatus("Service plan saved to Google Sheets.");
     return saved;
-  }
-
-  function findJobOnMap(job: Job) {
-    setMapJobFocus({ jobId: job.id, requestId: Date.now() });
-    setSelectedJob(null);
-    chooseTab("map");
   }
 
   return (
@@ -587,13 +499,12 @@ function OwnerDashboard() {
             {activeTab === "leads" && <Leads leads={leads} currentDate={currentDate} onLeadClick={setSelectedLead} />}
             {activeTab === "jobs" && <JobsSpreadsheet customers={customers} jobs={jobs} onAddJob={() => setCreateKind("job")} onEditJob={setSelectedJob} />}
             {activeTab === "calendar" && <Calendar customers={customers} jobs={jobs} events={calendarEvents} currentDate={currentDate} loading={showCalendarSkeleton} onJobClick={setSelectedJob} onCreateEvent={addCalendarEvent} onUpdateEvent={updateCalendarEvent} onDeleteEvent={removeCalendarEvent} />}
-            {activeTab === "map" && <Suspense fallback={<TabLoader label="map" />}><BusinessMap customers={customers} jobs={jobs} solicitations={solicitations} jobFocusRequest={mapJobFocus} onSaveJobCoordinates={saveMapJobCoordinates} onCreateSolicitation={addSolicitation} onUpdateSolicitation={updateSolicitation} onDeleteSolicitation={removeSolicitation} /></Suspense>}
             {activeTab === "analytics" && <Suspense fallback={<TabLoader label="analytics" />}><Analytics customers={customers} jobs={jobs} leads={leads} invoices={invoices} plans={plans} expenses={savedExpenses} currentDate={currentDate} /></Suspense>}
             {activeTab === "plans" && <Plans customers={customers} plans={plans} onPlanCreate={addPlan} onPlanUpdate={updatePlan} />}
           </div>
         </main>
       </div>
-      {selectedJob && <JobModal key={selectedJob.id} customers={customers} job={selectedJob} onSave={updateJob} onSaveCustomer={updateCustomer} onDelete={removeJob} onFindOnMap={findJobOnMap} onClose={() => setSelectedJob(null)} />}
+      {selectedJob && <JobModal key={selectedJob.id} customers={customers} job={selectedJob} onSave={updateJob} onSaveCustomer={updateCustomer} onDelete={removeJob} onClose={() => setSelectedJob(null)} />}
       {selectedLead && <LeadModal key={selectedLead.id} lead={selectedLead} onSave={updateLead} onDelete={removeLead} onClose={() => setSelectedLead(null)} />}
       {selectedCustomer && <CustomerProfile customer={selectedCustomer} jobs={jobs} onClose={() => setSelectedCustomer(null)} onEditCustomer={() => { setEditingCustomer(selectedCustomer); setSelectedCustomer(null); }} onEditJob={(job) => { setSelectedCustomer(null); setSelectedJob(job); }} />}
       {editingCustomer && <CustomerEditorModal customer={editingCustomer} onClose={() => setEditingCustomer(null)} onSave={updateCustomer} />}
@@ -872,7 +783,7 @@ function sourceSpreadsheetRowUrl(job: Job) {
   return Number.isFinite(rowNumber) ? `${upcomingJobsSheetUrl}#gid=0&range=A${rowNumber + 1}` : upcomingJobsSheetUrl;
 }
 
-function JobModal({ customers, job, onSave, onSaveCustomer, onDelete, onFindOnMap, onClose }: { customers: Customer[]; job: Job; onSave: (jobId: string, patch: Partial<Job>) => Promise<Job>; onSaveCustomer: (customerId: string, patch: Partial<Customer>) => Promise<void>; onDelete: (jobId: string) => Promise<void>; onFindOnMap: (job: Job) => void; onClose: () => void }) {
+function JobModal({ customers, job, onSave, onSaveCustomer, onDelete, onClose }: { customers: Customer[]; job: Job; onSave: (jobId: string, patch: Partial<Job>) => Promise<Job>; onSaveCustomer: (customerId: string, patch: Partial<Customer>) => Promise<void>; onDelete: (jobId: string) => Promise<void>; onClose: () => void }) {
   const importedMetadata = job.source === "spreadsheet-import" && !job.websiteEditedFields?.includes("notes") && job.notes.startsWith("Spreadsheet status:");
   const [draft, setDraft] = useState({ ...job, notes: importedMetadata ? "" : job.notes });
   const [priceInput, setPriceInput] = useState(job.price === 0 ? "" : String(job.price));
@@ -917,7 +828,7 @@ function JobModal({ customers, job, onSave, onSaveCustomer, onDelete, onFindOnMa
     }
   }
 
-  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/50 p-3 sm:p-4"><form onSubmit={submit} className="max-h-[94vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-5 shadow-soft dark:bg-slate-900"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-lagoon dark:text-cyan-300">Edit job</p><h3 className="text-xl font-bold text-ink dark:text-white">{findCustomer(customers, draft.customerId).name}</h3><p className="mt-1 text-xs text-slate-500">Changes save to your business records.</p></div><button type="button" className="icon-button shrink-0" onClick={onClose} title="Close" aria-label="Close job editor"><X size={17} /></button></div><div className="settings-grid mt-5"><Field label="Customer"><select value={draft.customerId} onChange={(event) => { const customerId = event.target.value; setDraft({ ...draft, customerId }); setPhoneInput(findCustomer(customers, customerId).phone ?? ""); }}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></Field><Field label="Status"><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Job["status"] })}>{jobStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field><Field label="Date"><input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></Field><Field label="Time"><input value={draft.time} required placeholder="09:00" onChange={(event) => setDraft({ ...draft, time: event.target.value })} /></Field><Field label="Price"><input type="number" min="0" step="0.01" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} /></Field><Field label="Service"><input value={draft.serviceType} required onChange={(event) => setDraft({ ...draft, serviceType: event.target.value })} /></Field><Field label="Phone number"><input type="tel" autoComplete="tel" value={phoneInput} placeholder="Customer phone number" onChange={(event) => setPhoneInput(event.target.value)} /></Field><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Address<input value={draft.address} required onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Internal job notes<textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label></div>{job.websiteEditedFields?.length ? <p className="mt-4 rounded-lg bg-mist px-3 py-2 text-xs font-medium text-lagoon dark:bg-cyan-500/15 dark:text-cyan-200">Website edits saved for: {job.websiteEditedFields.join(", ")}</p> : null}{confirmingDelete && <div className="mt-4 flex flex-col gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>This permanently removes the job from your business records.</span><div className="flex gap-2"><button type="button" className="text-button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Keep job</button><button type="button" className="primary-button bg-rose-600 gap-2 hover:bg-rose-700" onClick={() => void remove()} disabled={deleting}><Trash2 size={15} />{deleting ? "Removing..." : "Yes, remove"}</button></div></div>}{error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">{error}</p>}<div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-col gap-2 sm:flex-row">{upcomingJobsSheetUrl && job.source === "spreadsheet-import" && <a className="text-button gap-2" href={sourceSpreadsheetRowUrl(job)} target="_blank" rel="noreferrer"><ExternalLink size={15} />View original spreadsheet row</a>}<button type="button" className="text-button gap-2" onClick={() => onFindOnMap(job)} disabled={!job.address.trim()}><MapPinned size={15} />Find on map</button><button type="button" className="text-button gap-2 text-rose-600 hover:border-rose-300 hover:text-rose-700 dark:text-rose-300" onClick={() => setConfirmingDelete(true)} disabled={saving || deleting}><Trash2 size={15} />Remove job</button></div><div className="flex flex-col-reverse gap-2 sm:flex-row"><button type="button" className="text-button" onClick={onClose} disabled={saving || deleting}>Cancel</button><button type="submit" className="primary-button gap-2" disabled={saving || deleting}><Save size={16} />{saving ? "Saving..." : "Save changes"}</button></div></div></form></div>;
+  return <div className="fixed inset-0 z-50 grid place-items-center bg-ink/50 p-3 sm:p-4"><form onSubmit={submit} className="max-h-[94vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-5 shadow-soft dark:bg-slate-900"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-lagoon dark:text-cyan-300">Edit job</p><h3 className="text-xl font-bold text-ink dark:text-white">{findCustomer(customers, draft.customerId).name}</h3><p className="mt-1 text-xs text-slate-500">Changes save to your business records.</p></div><button type="button" className="icon-button shrink-0" onClick={onClose} title="Close" aria-label="Close job editor"><X size={17} /></button></div><div className="settings-grid mt-5"><Field label="Customer"><select value={draft.customerId} onChange={(event) => { const customerId = event.target.value; setDraft({ ...draft, customerId }); setPhoneInput(findCustomer(customers, customerId).phone ?? ""); }}>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></Field><Field label="Status"><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Job["status"] })}>{jobStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field><Field label="Date"><input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></Field><Field label="Time"><input value={draft.time} placeholder="09:00" onChange={(event) => setDraft({ ...draft, time: event.target.value })} /></Field><Field label="Price"><input type="number" min="0" step="0.01" value={priceInput} onChange={(event) => setPriceInput(event.target.value)} /></Field><Field label="Service"><input value={draft.serviceType} required onChange={(event) => setDraft({ ...draft, serviceType: event.target.value })} /></Field><Field label="Phone number"><input type="tel" autoComplete="tel" value={phoneInput} placeholder="Customer phone number" onChange={(event) => setPhoneInput(event.target.value)} /></Field><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Address<input value={draft.address} required onChange={(event) => setDraft({ ...draft, address: event.target.value })} /></label><label className="sm:col-span-2 text-sm font-semibold text-slate-600 dark:text-slate-300">Internal job notes<textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} /></label></div>{job.websiteEditedFields?.length ? <p className="mt-4 rounded-lg bg-mist px-3 py-2 text-xs font-medium text-lagoon dark:bg-cyan-500/15 dark:text-cyan-200">Website edits saved for: {job.websiteEditedFields.join(", ")}</p> : null}{confirmingDelete && <div className="mt-4 flex flex-col gap-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 sm:flex-row sm:items-center sm:justify-between"><span>This permanently removes the job from your business records.</span><div className="flex gap-2"><button type="button" className="text-button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>Keep job</button><button type="button" className="primary-button bg-rose-600 gap-2 hover:bg-rose-700" onClick={() => void remove()} disabled={deleting}><Trash2 size={15} />{deleting ? "Removing..." : "Yes, remove"}</button></div></div>}{error && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">{error}</p>}<div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-col gap-2 sm:flex-row">{upcomingJobsSheetUrl && job.source === "spreadsheet-import" && <a className="text-button gap-2" href={sourceSpreadsheetRowUrl(job)} target="_blank" rel="noreferrer"><ExternalLink size={15} />View original spreadsheet row</a>}<button type="button" className="text-button gap-2 text-rose-600 hover:border-rose-300 hover:text-rose-700 dark:text-rose-300" onClick={() => setConfirmingDelete(true)} disabled={saving || deleting}><Trash2 size={15} />Remove job</button></div><div className="flex flex-col-reverse gap-2 sm:flex-row"><button type="button" className="text-button" onClick={onClose} disabled={saving || deleting}>Cancel</button><button type="submit" className="primary-button gap-2" disabled={saving || deleting}><Save size={16} />{saving ? "Saving..." : "Save changes"}</button></div></div></form></div>;
 }
 
 function LeadModal({ lead, onSave, onDelete, onClose }: { lead: Lead; onSave: (leadId: string, patch: Partial<Lead>) => Promise<Lead>; onDelete: (leadId: string) => Promise<void>; onClose: () => void }) {
