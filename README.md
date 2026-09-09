@@ -20,7 +20,7 @@ An independent pressure-washing business dashboard with fresh Git history and no
 6. Initialize the empty database with `node --env-file=.env server/migrate.mjs`.
 7. Run `npm run build`, then `node --env-file=.env server/index.mjs`. Open `http://localhost:4173` and register the first owner using Google and the owner code.
 
-Without database and sign-in configuration, the application displays a setup-required screen. It does not connect to another business as a fallback.
+Before database and sign-in configuration, the application opens directly to an empty starter dashboard without a Google sign-in screen. You can browse the layout; saving records requires completing the setup above. No business API requests are made in starter mode. After configuration, account sign-in protects real records. It does not connect to another business as a fallback.
 
 ## Optional Google Sheets
 

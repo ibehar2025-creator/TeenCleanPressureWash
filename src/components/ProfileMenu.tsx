@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { BadgePercent, Building2, ChevronDown, CircleHelp, Clipboard, LogOut, Monitor, Moon, Save, Send, Sun, Trash2, UserRound, X } from "lucide-react";
 import { useAuth } from "../lib/authContext";
+import { isStarterPreview } from "../lib/starterPreview";
 import { submitManagerIssue } from "../lib/api";
 import type { ThemePreference } from "../lib/themePreference";
 import type { EmployeeProfile } from "../types/business";
@@ -15,6 +16,7 @@ export function ProfileMenu({ theme, onTheme, employee, onOwnerNavigate, preview
   onOwnerNavigate?: (tab: "team" | "payroll" | "contracts") => void;
   preview?: boolean;
 }) {
+  preview = preview || isStarterPreview();
   const { user, updateProfile, signOut, deleteAccount } = useAuth();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>(null);

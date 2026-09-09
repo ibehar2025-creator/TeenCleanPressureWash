@@ -1,4 +1,5 @@
 import type { CalendarEvent, ContractSubmission, Customer, EarningSubmission, EmployeeProfile, Expense, Invoice, Job, JobAssignment, JobCreateInput, Lead, PayrollPreview, PayrollRun, PayoutSummary, Review, ServicePlan, ServicePlanCreateInput, Solicitation } from "../types/business";
+import { emptyStarterRecords, isStarterPreview } from "./starterPreview";
 
 export type DatabaseSnapshot = Partial<{
   customers: Customer[];
@@ -52,6 +53,11 @@ export interface ManagerIssue {
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T | null> {
+  if (isStarterPreview()) {
+    if (path === "/api/bootstrap" || path === "/api/sync-sheets") return emptyStarterRecords() as T;
+    if (options?.method && options.method !== "GET") throw new Error("Connect your own database and account setup before saving records.");
+    return null;
+  }
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,

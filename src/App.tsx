@@ -27,6 +27,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useAuth } from "./lib/authContext";
+import { isStarterPreview } from "./lib/starterPreview";
 import { loadThemePreference, saveThemePreference, themeIsDark } from "./lib/themePreference";
 import { JobsSpreadsheet } from "./components/JobsSpreadsheet";
 import { ProfileMenu } from "./components/ProfileMenu";
@@ -323,7 +324,7 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
       if (payload.reviews) setReviews(payload.reviews);
       if (payload.solicitations) setSolicitations(payload.solicitations);
       if (payload.calendarEvents) setCalendarEvents(payload.calendarEvents);
-      setSyncStatus(`Business records refreshed at ${new Date().toLocaleTimeString()}.`);
+      setSyncStatus(isStarterPreview() ? "Starter workspace" : `Business records refreshed at ${new Date().toLocaleTimeString()}.`);
     } catch (error) {
       setSyncStatus(error instanceof Error ? error.message : "Google Sheets sync failed.");
     } finally {
@@ -371,7 +372,7 @@ function OwnerDashboard({ onPreviewEmployee }: { onPreviewEmployee: () => void }
         if (payload.reviews) setReviews(payload.reviews);
         if (payload.solicitations) setSolicitations(payload.solicitations);
         if (payload.calendarEvents) setCalendarEvents(payload.calendarEvents);
-        setSyncStatus("Loaded saved database records.");
+        setSyncStatus(isStarterPreview() ? "Starter workspace" : "Loaded saved database records.");
       })
       .catch((error) => {
         setSyncStatus(error instanceof Error ? error.message : "Database load failed.");

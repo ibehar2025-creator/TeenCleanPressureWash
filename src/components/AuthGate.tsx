@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { BriefcaseBusiness, LoaderCircle, LockKeyhole, ShieldCheck, UserRound, Users } from "lucide-react";
 import { AuthContext } from "../lib/authContext";
+import { setStarterPreview, starterUser } from "../lib/starterPreview";
 import type { AccountRole, AuthUser } from "../lib/authContext";
 
 type GoogleProfile = Pick<AuthUser, "email" | "name" | "pictureUrl">;
@@ -100,6 +101,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     ]).then(([nextConfig, session]) => {
       if (!active) return;
       setConfig(nextConfig);
+      setStarterPreview(!nextConfig.enabled);
       setUser(session.user);
     }).catch((loadError) => {
       if (active) setError(loadError instanceof Error ? loadError.message : "Unable to load sign-in.");
@@ -174,6 +176,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (user) return <AuthContext.Provider value={{ user, updateProfile, signOut, deleteAccount }}>{children}</AuthContext.Provider>;
 
   if (!config?.enabled) {
+    if (config) return <AuthContext.Provider value={{ user: starterUser, updateProfile: async () => { throw new Error("Connect this workspace before saving a profile."); }, signOut: async () => {}, deleteAccount: async () => { throw new Error("There is no account to delete in this starter workspace."); } }}>{children}</AuthContext.Provider>;
     return <AuthShell><div className="w-full"><ShieldCheck className="text-lagoon" size={32} /><h2 className="mt-5 text-2xl font-bold text-ink">Sign-in setup required</h2><p className="mt-2 text-sm leading-6 text-slate-500">Google authentication has not been connected to this deployment yet.</p>{error && <p className="mt-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}</div></AuthShell>;
   }
 
