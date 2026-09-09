@@ -10,6 +10,7 @@ function importedRowNumber(job: Job) {
 }
 
 function originalDate(job: Job) {
+  if (!job.date) return "TBD";
   const marker = "Original date: ";
   const start = job.notes.indexOf(marker);
   if (start >= 0 && !job.websiteEditedFields?.some((field) => field === "date" || field === "time")) {

@@ -13,7 +13,13 @@ const port = Number(process.env.PORT || 4173);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const distPath = path.join(projectRoot, "dist");
-const syncUrl = process.env.SHEETS_SYNC_URL || process.env.VITE_SHEETS_SYNC_URL;
+const syncUrl = process.env.SHEETS_SYNC_URL;
+
+function sheetEndpoint() {
+  const url = new URL(syncUrl);
+  if (process.env.SHEETS_SYNC_TOKEN) url.searchParams.set("syncToken", process.env.SHEETS_SYNC_TOKEN);
+  return url.toString();
+}
 const automaticSheetSyncIntervalMs = 30 * 60 * 1000;
 let lastAutomaticSheetSyncAt = 0;
 const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
@@ -36,6 +42,7 @@ async function ensureMapSchema() {
   if (!pool) return;
   await pool.query(`
     alter table jobs add column if not exists latitude double precision;
+    alter table jobs alter column date drop not null;
     alter table jobs add column if not exists longitude double precision;
     alter table jobs add column if not exists geocoded_address text;
     alter table jobs add column if not exists website_overrides jsonb not null default '{}'::jsonb;
@@ -340,7 +347,7 @@ const toJob = (row) => {
   const completed = row.status === "completed";
   return ({
   id: row.id,
-  date: row.date?.toISOString?.().slice(0, 10) ?? row.date,
+  date: row.date?.toISOString?.().slice(0, 10) ?? row.date ?? "",
   time: row.time,
   customerId: row.customer_id,
   address: row.address,
@@ -811,7 +818,7 @@ async function upsertJobs(client, jobs = []) {
     const completed = job.status === "completed";
     return ({
     id: job.id,
-    date: job.date,
+    date: job.date || null,
     time: job.time,
     customer_id: job.customerId,
     address: job.address ?? "",
@@ -1019,10 +1026,10 @@ async function syncSheetsIntoDatabase(payload) {
     await upsertInvoices(client, payload.invoices);
     await upsertReviews(client, payload.reviews);
     await upsertServicePlans(client, payload.servicePlans);
-    await client.query("delete from service_plans where id like 'sp-%' and not (id = any($1::text[]))", [servicePlanIds]);
-    await client.query("delete from invoices where id like 'sheet-invoice-%' and not (id = any($1::text[]))", [invoiceIds]);
+    if (Array.isArray(payload.servicePlans)) await client.query("delete from service_plans where id like 'sp-%' and not (id = any($1::text[]))", [servicePlanIds]);
+    if (Array.isArray(payload.invoices)) await client.query("delete from invoices where id like 'sheet-invoice-%' and not (id = any($1::text[]))", [invoiceIds]);
     await client.query("delete from jobs where source = 'spreadsheet-import' and not (id = any($1::text[]))", [jobIds]);
-    await client.query("delete from reviews where source = 'spreadsheet-import' and not (id = any($1::text[]))", [reviewIds]);
+    if (Array.isArray(payload.reviews)) await client.query("delete from reviews where source = 'spreadsheet-import' and not (id = any($1::text[]))", [reviewIds]);
     await client.query("delete from customers where id like 'sheet-customer-%' and not (id = any($1::text[]))", [customerIds]);
     await client.query("commit");
   } catch (error) {
@@ -1242,9 +1249,13 @@ app.get("/api/bootstrap", requireDatabase, requireOwner, async (_req, res, next)
 });
 
 async function runSheetSync() {
-  const response = await fetch(syncUrl, { signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(sheetEndpoint(), { signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error(`Sheet sync endpoint failed with ${response.status}`);
   const payload = await response.json();
+  if (payload?.ok === false) throw new Error(payload.error || "Google Sheets rejected the sync.");
+  if (!Array.isArray(payload?.customers) || !Array.isArray(payload?.jobs)) {
+    throw new Error("Invalid spreadsheet response. Existing records were not changed.");
+  }
   const customersById = new Map((payload.customers ?? []).map((customer) => [customer.id, customer]));
   for (const plan of payload.servicePlans ?? []) {
     if (plan.customer?.id && !customersById.has(plan.customer.id)) customersById.set(plan.customer.id, plan.customer);
@@ -1266,7 +1277,7 @@ async function refreshSheetsIfStale() {
 async function runSheetAction(action, row) {
   // Spreadsheet integration is optional; database writes still proceed without it.
   if (!syncUrl) return { ok: true, skipped: true };
-  const response = await fetch(syncUrl, {
+  const response = await fetch(sheetEndpoint(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action, row }),
@@ -1274,7 +1285,7 @@ async function runSheetAction(action, row) {
   });
   if (!response.ok) throw new Error(`Sheet write endpoint failed with ${response.status}`);
   const payload = await response.json();
-  if (payload?.ok === false) throw new Error(payload.error || "Google Sheets rejected the update.");
+  if (payload?.ok !== true) throw new Error(payload?.error || "Google Sheets did not confirm the update.");
   return payload;
 }
 
@@ -1557,7 +1568,7 @@ app.patch("/api/jobs/:id", requireDatabase, requireOwner, async (req, res, next)
 
     const result = await pool.query(
       `update jobs
-       set date = coalesce($2, date),
+       set date = case when $2::text is null then date else nullif($2::text, '')::date end,
            time = coalesce($3, time),
            customer_id = coalesce($4, customer_id),
            address = coalesce($5, address),

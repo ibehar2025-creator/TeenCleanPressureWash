@@ -32,7 +32,7 @@ export function paymentHistory(customerId: string, invoices: Invoice[]) {
 }
 
 export function jobDisplayStatus(job: Job, targetDate = isoToday()): Job["status"] {
-  if ((job.status === "scheduled" || job.status === "in progress") && job.date < targetDate) return "past due";
+  if (job.date && (job.status === "scheduled" || job.status === "in progress") && job.date < targetDate) return "past due";
   return job.status;
 }
 
@@ -118,6 +118,7 @@ export function businessMetrics(jobs: Job[], invoices: Invoice[], leads: Lead[],
 export function revenueByDay(jobs: Job[]) {
   return Object.values(
     jobs.reduce<Record<string, { date: string; revenue: number; tips: number; jobs: number }>>((acc, job) => {
+      if (!job.date) return acc;
       acc[job.date] ??= { date: job.date.slice(5), revenue: 0, tips: 0, jobs: 0 };
       acc[job.date].revenue += job.amountPaid;
       acc[job.date].tips += job.tipAmount;
@@ -129,7 +130,7 @@ export function revenueByDay(jobs: Job[]) {
 
 export function cumulativeRevenueOverTime(jobs: Job[]) {
   const revenueByDate = jobs
-    .filter((job) => job.status !== "canceled")
+    .filter((job) => job.date && job.status !== "canceled")
     .reduce<Record<string, number>>((totals, job) => {
       totals[job.date] = (totals[job.date] ?? 0) + job.price;
       return totals;

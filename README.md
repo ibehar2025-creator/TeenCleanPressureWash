@@ -24,9 +24,9 @@ Before database and sign-in configuration, the application opens directly to an 
 
 Leave `SHEETS_SYNC_URL` blank to use the website with its own database only. Job creation, editing, and other database workflows do not require a spreadsheet. The refresh button reloads database records when no spreadsheet is configured.
 
-To enable spreadsheets later, create a separate spreadsheet and a compatible sync endpoint. Set the server-only `SHEETS_SYNC_URL` to that endpoint, and `VITE_JOBS_SHEET_URL` to the new spreadsheet's browser URL. Rebuild after changing a `VITE_` variable. The endpoint URL is not a normal spreadsheet sharing link.
+The included [Apps Script connector and setup guide](google-sheets/SETUP.md) supports the existing `Sheet1` customer/jobs layout. Deploy it from the friend's spreadsheet, then configure server-only `SHEETS_SYNC_URL` and `SHEETS_SYNC_TOKEN`, plus `VITE_JOBS_SHEET_URL` for the browser link. Rebuild after changing a `VITE_` variable. The sync endpoint is not a normal spreadsheet sharing link.
 
-The server expects GET to return collections such as `customers`, `jobs`, `leads`, `invoices`, `servicePlans`, and `reviews`, with stable unique IDs matching `src/types/business.ts`. POST accepts `{ action, row }`; supported callers are listed in `server/index.mjs` under `runSheetAction` (customer/lead creation, job creation/update/deletion, and recurring jobs/service plans). The endpoint must return `{ ok: true }` on successful writes and report failures explicitly. No Apps Script deployment or external integration code is included.
+GET must return `customers` and `jobs` arrays with stable unique IDs matching `src/types/business.ts`; other collections are optional. POST accepts `{ action, row }` and must return `{ ok: true }` on successful writes. The supplied connector syncs jobs and customer data; leads and recurring-plan details remain database-backed. TBD jobs remain undated, and spreadsheet total/placeholder rows are excluded. Deployment and Google authorization must be completed by the spreadsheet owner.
 
 ## Optional maps
 
@@ -46,7 +46,7 @@ Update the OAuth authorized origin and Maps key restrictions for the deployed UR
 npm run build
 npm run lint
 node --check server/index.mjs
-node --test tests/isolation.test.mjs tests/solo-owner.test.mjs
+node --test tests/isolation.test.mjs tests/solo-owner.test.mjs tests/sheets-connector.test.mjs
 ```
 
 `src/data/googleSheetData.ts` contains only empty collections and new-business defaults. Optional integration values are blank in `.env.example`. Credentials, historical customer records, and the source business's Git history are excluded.

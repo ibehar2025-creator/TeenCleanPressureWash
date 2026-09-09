@@ -12,7 +12,7 @@ const tree = ts.createSourceFile('index.mjs', server, ts.ScriptTarget.Latest, tr
 const sheetAction = tree.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'runSheetAction');
 
 function actionWith(syncUrl, fetch) {
-  return vm.runInNewContext(`${sheetAction.getText(tree)}; runSheetAction`, { syncUrl, fetch, AbortSignal });
+  return vm.runInNewContext(`${sheetAction.getText(tree)}; runSheetAction`, { syncUrl, sheetEndpoint: () => syncUrl, fetch, AbortSignal });
 }
 
 test('all bundled business collections are empty', () => {

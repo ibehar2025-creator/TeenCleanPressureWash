@@ -31,7 +31,7 @@ create table if not exists leads (
 
 create table if not exists jobs (
   id text primary key,
-  date date not null,
+  date date,
   time text not null default '09:00',
   customer_id text not null references customers(id) on delete cascade,
   address text not null default '',
