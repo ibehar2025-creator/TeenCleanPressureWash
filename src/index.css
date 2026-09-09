@@ -539,3 +539,20 @@ select {
 .brand-name {
   overflow-wrap: anywhere;
 }
+
+.navigation-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.navigation-brand span:last-child {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+}

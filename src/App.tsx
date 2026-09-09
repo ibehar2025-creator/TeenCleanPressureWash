@@ -554,7 +554,7 @@ function OwnerDashboard() {
     <div className={cx("min-h-screen w-full max-w-full overflow-x-hidden", darkMode && "dark")}>
       <div className="flex min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 text-slate-700 dark:bg-slate-950 dark:text-slate-200">
         <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 lg:block">
-          <div className="mb-6 rounded-lg bg-ink p-4 text-white"><h1 className="brand-name text-xl font-bold">TeenCleanPressureWash</h1><p className="mt-2 text-xs text-slate-300">Daily control center for jobs, scheduling, and growth.</p></div>
+          <div className="mb-6 rounded-lg bg-ink p-4 text-white"><h1 className="navigation-brand"><span>TeenClean</span><span>Pressure Wash</span></h1><p className="mt-3 text-xs leading-5 text-slate-300">Daily control center for jobs, scheduling, and growth.</p></div>
           <nav className="space-y-1">{tabs.filter((tab) => !tab.mobileOnly).map((tab) => { const Icon = tab.icon; return <button key={tab.id} data-testid={`desktop-tab-${tab.id}`} onClick={() => chooseTab(tab.id)} className={cx("nav-item", activeTab === tab.id && "active")}><Icon size={18} /><span>{tab.label}</span></button>; })}</nav>
           
         </aside>
@@ -574,7 +574,7 @@ function OwnerDashboard() {
               <button className="absolute inset-0 bg-ink/45" aria-label="Close navigation" onClick={() => setMobileMenuOpen(false)} />
               <aside className="mobile-drawer relative flex h-full w-[min(86vw,340px)] flex-col border-r border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900">
                 <div className="mb-4 flex items-start justify-between gap-3 rounded-lg bg-ink p-4 text-white">
-                  <div><h2 className="brand-name text-lg font-bold">TeenCleanPressureWash</h2><p className="mt-1 text-xs text-slate-300">Choose a dashboard tab.</p></div>
+                  <div className="min-w-0 flex-1"><h2 className="navigation-brand"><span>TeenClean</span><span>Pressure Wash</span></h2><p className="mt-3 text-xs leading-5 text-slate-300">Choose a dashboard tab.</p></div>
                   <button className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/20 text-white transition hover:bg-white/10" onClick={() => setMobileMenuOpen(false)} title="Close navigation" aria-label="Close navigation"><X size={18} /></button>
                 </div>
                 <nav className="space-y-1 overflow-y-auto">{tabs.map((tab) => { const Icon = tab.icon; return <button key={tab.id} data-testid={`mobile-tab-${tab.id}`} onClick={() => chooseTab(tab.id)} className={cx("nav-item", activeTab === tab.id && "active")}><Icon size={18} /><span>{tab.label}</span></button>; })}</nav>
