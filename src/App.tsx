@@ -12,6 +12,7 @@ import {
   ClipboardList,
   ExternalLink,
   LayoutDashboard,
+  MapPin,
   Menu,
   Pencil,
   Plus,
@@ -56,7 +57,7 @@ import { followUpLabel, followUpTiming } from "./lib/followUps";
 import type { CalendarEvent, CalendarEventType, Customer, Expense, Invoice, Job, JobCreateInput, Lead, LeadStatus, PaymentStatus, ServicePlan, ServicePlanCreateInput } from "./types/business";
 
 type ReviewRow = { id: string; submittedAt: string; name: string; rating: number; review: string; source: string };
-type TabId = "dashboard" | "customers" | "leads" | "jobs" | "calendar" | "analytics" | "plans";
+type TabId = "dashboard" | "customers" | "leads" | "jobs" | "calendar" | "map" | "analytics" | "plans";
 type SyncPayload = Partial<{ customers: Customer[]; jobs: Job[]; leads: Lead[]; invoices: Invoice[]; servicePlans: ServicePlan[]; reviews: ReviewRow[]; expenses: Expense[]; calendarEvents: CalendarEvent[] }>;
 type CalendarDay = { label: string; date: string };
 
@@ -65,6 +66,7 @@ const tabs: { id: TabId; label: string; icon: ElementType; mobileOnly?: boolean 
   { id: "leads", label: "Leads", icon: Sparkles },
   { id: "jobs", label: "Jobs", icon: BriefcaseBusiness },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
+  { id: "map", label: "Map", icon: MapPin },
   { id: "analytics", label: "Analytics", icon: BarChart3 },
   { id: "plans", label: "Service Plans", icon: ClipboardList },
 ];
@@ -79,6 +81,7 @@ const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "
 const fullDateFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
 const calendarSkeletonDurationMs = 1_500;
 const Analytics = lazy(() => import("./components/Analytics").then((module) => ({ default: module.Analytics })));
+const BusinessMap = lazy(() => import("./components/BusinessMap").then((module) => ({ default: module.BusinessMap })));
 
 function TabLoader({ label }: { label: string }) {
   return <div className="grid min-h-80 place-items-center rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"><div className="text-center"><RefreshCw className="mx-auto animate-spin text-lagoon" size={24} /><p className="mt-3 text-sm font-medium text-slate-500">Loading {label}...</p></div></div>;
@@ -500,6 +503,7 @@ function OwnerDashboard() {
             {activeTab === "jobs" && <JobsSpreadsheet customers={customers} jobs={jobs} onAddJob={() => setCreateKind("job")} onEditJob={setSelectedJob} />}
             {activeTab === "calendar" && <Calendar customers={customers} jobs={jobs} events={calendarEvents} currentDate={currentDate} loading={showCalendarSkeleton} onJobClick={setSelectedJob} onCreateEvent={addCalendarEvent} onUpdateEvent={updateCalendarEvent} onDeleteEvent={removeCalendarEvent} />}
             {activeTab === "analytics" && <Suspense fallback={<TabLoader label="analytics" />}><Analytics customers={customers} jobs={jobs} leads={leads} invoices={invoices} plans={plans} expenses={savedExpenses} currentDate={currentDate} /></Suspense>}
+            {activeTab === "map" && <Suspense fallback={<TabLoader label="map" />}><BusinessMap customers={customers} jobs={jobs} onJob={setSelectedJob} /></Suspense>}
             {activeTab === "plans" && <Plans customers={customers} plans={plans} onPlanCreate={addPlan} onPlanUpdate={updatePlan} />}
           </div>
         </main>

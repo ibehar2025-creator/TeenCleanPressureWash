@@ -45,14 +45,17 @@ test('missing setup and old connector show errors rather than empty success', as
   assert.match((await response.json()).error, /Update Code.gs/);
 });
 
-test('database/maps/account mutation endpoints and dependencies are removed', async t => {
+test('map is available without database or account mutation endpoints', async t => {
   const url = await serve(t, { syncUrl: '', syncToken: '' });
   for (const path of ['/api/auth/register', '/api/auth/account', '/api/solicitations', '/api/owner/operations']) {
     assert.equal((await fetch(url + path, { method: 'POST' })).status, 404);
   }
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url)));
   assert.equal(pkg.dependencies.pg, undefined);
-  assert.equal(pkg.dependencies['@vis.gl/react-google-maps'], undefined);
+  assert.ok(pkg.dependencies['@vis.gl/react-google-maps']);
   const app = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(app, /BusinessMap|onFindOnMap|id: "map"/);
+  assert.match(app, /id: "map"/);
+  const map = fs.readFileSync(new URL('../src/components/BusinessMap.tsx', import.meta.url), 'utf8');
+  assert.match(map, /getCurrentPosition/);
+  assert.doesNotMatch(map, /watchPosition|\/api\/solicitations/);
 });

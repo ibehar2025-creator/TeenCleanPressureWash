@@ -1,6 +1,6 @@
 # TeenCleanPressureWash
 
-Google Sheets is the only persistent business-data store. No Supabase/Postgres database, Google login, employee features or Maps integration is required or included in the running site.
+Google Sheets is the only persistent business-data store. No Supabase/Postgres database, Google login or employee features are required. The optional Map tab uses Google Maps independently of storage.
 
 ## Connect the existing spreadsheet
 
@@ -26,7 +26,7 @@ Map and solicitation tracking have been removed. Imported notes mentioning recur
 
 This site has no login at the owner's request. **Anyone with the URL can view and change business records, including deleting jobs.** Notifications use one shared inbox. The connector token stays on the server and protects the raw Apps Script endpoint, not access to the public website.
 
-Only the three Sheets variables above are used. Remove obsolete `DATABASE_URL`, Google login/code variables and `VITE_GOOGLE_MAPS_API_KEY` from this Render service. Removing the Maps code prevents this site from loading the Maps API; it does not cancel an existing Google billing account or erase previous charges. Do not disable anything belonging to the original business.
+Remove obsolete `DATABASE_URL` and Google login/code variables from this Render service. To enable the Map tab, set `VITE_GOOGLE_MAPS_API_KEY` and rebuild/deploy. Enable Maps JavaScript API and Geocoding API for that key and restrict browser referrers to this site's domain. Map loads and submitted address lookups use Google's billing/quota rules; no Places autocomplete or automatic background geocoding is used. Search matches job names/addresses from Sheets and locates the selected job, or submit a full address directly. The location button reads location once, without tracking movement. Solicitation tracking is not included. Do not change keys or billing belonging to the original business.
 
 ## Local development and verification
 
